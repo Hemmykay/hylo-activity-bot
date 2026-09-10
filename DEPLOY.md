@@ -54,10 +54,15 @@ but the bot's data must come from the current machine — Asset rows (mints,
 stake vaults, collateral wallets, cap, emoji), FAQs, venues, corrections.
 
 Only the ESSENTIAL config tables are transferred (faqs, faq_categories,
-venues, assets, venue_asset_xp, corrections — ~40 KB). The large tables
+venues, assets, venue_asset_xp, corrections — tiny). The large tables
 (price_snapshots, mint_flow_events, search/audit logs) are deliberately
 skipped: they regenerate as the bot runs, and the ticker's 24h change
 bootstraps from implied prices until snapshots accumulate (~24h).
+
+The paste payload is PG16-safe: all `SET` lines and pg_dump-18 `\restrict`
+markers are stripped (PG18-only settings abort the whole transaction on
+PG16), gzipped, and base64-encoded into ONE line so the web terminal cannot
+mangle a multi-line paste. Restore is atomic via BEGIN/COMMIT.
 
 **Prepare (on the Mac, regenerate at cutover for freshest data):**
 ```bash
@@ -65,18 +70,21 @@ cd ~/Hylo\ Asset\ Live\ Bot
 pg_dump -h localhost -U mac --no-owner --data-only --inserts \
   --table=faqs --table=faq_categories --table=venues --table=assets \
   --table=venue_asset_xp --table=corrections hylo_support > essential-data.sql
-{ echo "BEGIN;"; grep -vE "^\\\\(restrict|unrestrict)" essential-data.sql; echo "COMMIT;"; } \
-  > essential-data-paste.sql
+grep -vE "^(SET |\\\\(restrict|unrestrict))" essential-data.sql | sed '/^BEGIN;$/d; /^COMMIT;$/d' > /tmp/e.sql
+{ echo "BEGIN;"; cat /tmp/e.sql; echo "COMMIT;"; } > essential-data-final.sql
+gzip -c essential-data-final.sql | base64 | tr -d '\n' | pbcopy
 ```
+The payload (~20 KB, one line) is now on the clipboard.
 
 **Restore (in Dokploy's UI):**
-1. Open the Compose deployment → the **db** service → **Terminal** tab
-   (this is a shell inside the Postgres container).
-2. Start a psql session: `psql -U hylo -d hylo_support`
-3. Open `essential-data-paste.sql` on the Mac, copy its whole content, paste
-   it into the terminal, press Enter. The trailing `COMMIT;` makes it atomic —
-   either all rows land or none.
-4. Verify: `SELECT symbol FROM assets;` should list the 7 tracked assets.
+1. Compose deployment → **db** container → **Open Terminal** / Containers tab.
+2. Paste this ONE line, replacing `<PASTE>` with the clipboard (Cmd-V):
+   ```
+   echo '<PASTE>' | base64 -d | gunzip > /tmp/r.sql && psql -U hylo -d hylo_support -f /tmp/r.sql
+   ```
+3. Expect 45 `INSERT 0 1` lines and a final `COMMIT`.
+4. Verify: `psql -U hylo -d hylo_support -c 'SELECT symbol FROM assets;'`
+   should list the 7 tracked assets.
 
 (If the VPS ever regains SSH access, a full 1:1 dump works too:
 `pg_dump --no-owner --no-privileges --clean --if-exists hylo_support > dump.sql`,
