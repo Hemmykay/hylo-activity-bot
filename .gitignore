@@ -32,3 +32,4 @@ essential-data*.sql
 
 # TypeScript
 *.tsbuildinfo
+essential-data*.sql
