@@ -14,7 +14,9 @@ ENV NODE_ENV=production
 RUN apt-get update -y && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+# --include=dev: tsx and the prisma CLI are devDependencies but both run in
+# production (NODE_ENV=production would otherwise make npm skip them).
+RUN npm ci --include=dev
 
 COPY prisma ./prisma
 RUN npx prisma generate
