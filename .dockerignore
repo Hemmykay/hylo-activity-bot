@@ -9,5 +9,4 @@ dist
 logs
 *.log
 .DS_Store
-api-migration-tests
 DEPLOY.md

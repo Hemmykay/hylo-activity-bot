@@ -109,13 +109,12 @@ You want to see, in order:
 
 ### 6. Smoke-test the new VPS's network position (once)
 ```bash
-git clone <repo> && cd hylo-asset-live-bot
-npm ci
-HELIUS_API_KEY=<key> node --env-file=.env --import tsx/esm api-migration-tests/04-price-parity.ts
+curl -s https://api.hylo.so/v1/status
 ```
-Confirms api.hylo.so + Helius are reachable and sane from the datacenter IP
-(the API's bot-protection 503 was seen from a home connection; the client
-backs off and retries either way).
+Should return JSON with `lastIndexedSignature` and a recent `latestEventTime`
+(within a few minutes of now). If the API is unreachable or stale from the
+datacenter IP, the bot automatically falls back to Helius RPC scanning — but
+it's worth knowing either way.
 
 ## Ongoing
 

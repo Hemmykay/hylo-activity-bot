@@ -5,7 +5,7 @@
  * The mapping preserves exactly what the bot's raw-transaction scanners
  * (queryMintEvents / queryBurnEvents / queryStakeEvents) reported before the
  * API became the primary source — verified instruction-by-instruction against
- * the feed on 2026-09-02 (api-migration-tests/02d-amount-parity.ts):
+ * the live feed on 2026-09-02 before cutover:
  *  - every non-revenue, non-stability-pool mintTo  → 'mint'   (alert + ledger)
  *  - every non-stability-pool burn                 → 'burn'   (ledger only —
  *    burns have never had a live alert, the daily summary is their surface)
