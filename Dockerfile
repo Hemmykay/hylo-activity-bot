@@ -9,6 +9,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Prisma's engines need the OpenSSL CLI/libs, which -slim images omit —
+# without this, `prisma migrate deploy` dies with "Schema engine error".
+RUN apt-get update -y && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 RUN npm ci
 
