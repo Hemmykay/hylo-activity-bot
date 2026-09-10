@@ -29,7 +29,7 @@ Thumbs.db
 /dump.sql
 *.dump
 essential-data*.sql
+restore-clipboard.b64
 
 # TypeScript
 *.tsbuildinfo
-essential-data*.sql
