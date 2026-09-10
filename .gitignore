@@ -28,6 +28,7 @@ Thumbs.db
 # DB dumps taken during migrations/backups (never commit data)
 /dump.sql
 *.dump
+essential-data*.sql
 
 # TypeScript
 *.tsbuildinfo
