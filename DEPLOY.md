@@ -48,32 +48,39 @@ git push -u origin main
    - To change/view it later: the same Environment tab (Dokploy stores it).
 4. Deploy. First build takes a few minutes (npm ci + prisma engines).
 
-### 3. Restore the database contents
+### 3. Restore the database contents (no SSH needed)
 The empty Postgres gets its schema automatically on boot (`migrate deploy`),
 but the bot's data must come from the current machine — Asset rows (mints,
-stake vaults, collateral wallets, cap, emoji), FAQ, venues, corrections.
+stake vaults, collateral wallets, cap, emoji), FAQs, venues, corrections.
 
-`--clean --if-exists` makes the dump a drop-and-recreate restore, so it is
-safe to apply at ANY point — before or after the new bot has already booted
-and migrated (no CREATE TABLE collisions):
+Only the ESSENTIAL config tables are transferred (faqs, faq_categories,
+venues, assets, venue_asset_xp, corrections — ~40 KB). The large tables
+(price_snapshots, mint_flow_events, search/audit logs) are deliberately
+skipped: they regenerate as the bot runs, and the ticker's 24h change
+bootstraps from implied prices until snapshots accumulate (~24h).
 
+**Prepare (on the Mac, regenerate at cutover for freshest data):**
 ```bash
-# on this Mac — dump the live DB (re-run this at cutover for the freshest data)
-pg_dump -h localhost -U mac --no-owner --no-privileges --clean --if-exists hylo_support > dump.sql
-
-# copy it to the VPS
-scp dump.sql root@<vps-host>:/tmp/
-
-# on the VPS — find the Postgres container and restore into it
-ssh root@<vps-host>
-docker ps --format '{{.Names}}' | grep -i postgres     # e.g. hylo-db-1
-docker exec -i <postgres-container-name> psql -U hylo -d hylo_support < /tmp/dump.sql
-
-# sanity check — should list the tracked assets (7 rows)
-docker exec -it <postgres-container-name> psql -U hylo -d hylo_support -c 'SELECT symbol, active FROM "Asset";'
+cd ~/Hylo\ Asset\ Live\ Bot
+pg_dump -h localhost -U mac --no-owner --data-only --inserts \
+  --table=faqs --table=faq_categories --table=venues --table=assets \
+  --table=venue_asset_xp --table=corrections hylo_support > essential-data.sql
+{ echo "BEGIN;"; grep -vE "^\\\\(restrict|unrestrict)" essential-data.sql; echo "COMMIT;"; } \
+  > essential-data-paste.sql
 ```
 
-Do this before opening the bot to users so FAQ/venue answers work immediately.
+**Restore (in Dokploy's UI):**
+1. Open the Compose deployment → the **db** service → **Terminal** tab
+   (this is a shell inside the Postgres container).
+2. Start a psql session: `psql -U hylo -d hylo_support`
+3. Open `essential-data-paste.sql` on the Mac, copy its whole content, paste
+   it into the terminal, press Enter. The trailing `COMMIT;` makes it atomic —
+   either all rows land or none.
+4. Verify: `SELECT symbol FROM assets;` should list the 7 tracked assets.
+
+(If the VPS ever regains SSH access, a full 1:1 dump works too:
+`pg_dump --no-owner --no-privileges --clean --if-exists hylo_support > dump.sql`,
+scp it up, and `docker exec -i <pg-container> psql -U hylo -d hylo_support < dump.sql`.)
 
 ### 4. Cutover — stop the Mac instance FIRST or immediately after
 ```bash
