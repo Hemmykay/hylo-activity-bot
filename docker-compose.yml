@@ -1,0 +1,68 @@
+# Dokploy "Compose" service — bot + its Postgres in one stack.
+# Create a Compose service in Dokploy pointing at this file; set the
+# environment variables listed in DEPLOY.md in the service's Environment tab
+# (Dokploy injects them into ${...} interpolation and into the bot container).
+#
+# The bot needs no ports or domain: Discord is outbound-only. Only the DB is
+# on the internal network, and it is NOT exposed publicly.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hylo
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: hylo_support
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hylo -d hylo_support"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://hylo:${DB_PASSWORD}@db:5432/hylo_support
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      MINT_ALERTS_CHANNEL_ID: ${MINT_ALERTS_CHANNEL_ID}
+      MIN_VAL_REPORT: ${MIN_VAL_REPORT}
+      EHYUSD_CAP_CHANNEL_ID: ${EHYUSD_CAP_CHANNEL_ID}
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS}
+      REQUIRED_ROLE_ID: ${REQUIRED_ROLE_ID}
+      AI_PROVIDER_CHAIN: ${AI_PROVIDER_CHAIN}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL}
+      GEMINI_MODEL: ${GEMINI_MODEL}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      DEV_ALERT_USER_ID: ${DEV_ALERT_USER_ID}
+      FAQ_CONFIDENCE_THRESHOLD: ${FAQ_CONFIDENCE_THRESHOLD}
+      PENDING_ACTION_TTL_MINUTES: ${PENDING_ACTION_TTL_MINUTES}
+      HYLO_API_BASE_URL: ${HYLO_API_BASE_URL}
+      HYLO_V1_EVENTS_DISABLED: ${HYLO_V1_EVENTS_DISABLED}
+      HELIUS_API_KEY: ${HELIUS_API_KEY}
+      HELIUS_API_KEY_2: ${HELIUS_API_KEY_2}
+      TICKER_BOT_TOKEN_XSOL: ${TICKER_BOT_TOKEN_XSOL}
+      TICKER_BOT_TOKEN_XBTC: ${TICKER_BOT_TOKEN_XBTC}
+      TICKER_BOT_TOKEN_XHYPE: ${TICKER_BOT_TOKEN_XHYPE}
+      TICKER_BOT_TOKEN_EHYUSD: ${TICKER_BOT_TOKEN_EHYUSD}
+      TWITTER_API_KEY: ${TWITTER_API_KEY}
+      TWITTER_API_SECRET: ${TWITTER_API_SECRET}
+      TWITTER_ACCESS_TOKEN: ${TWITTER_ACCESS_TOKEN}
+      TWITTER_ACCESS_TOKEN_SECRET: ${TWITTER_ACCESS_TOKEN_SECRET}
+      TWITTER_MIN_NET_USD: ${TWITTER_MIN_NET_USD}
+      LOG_LEVEL: ${LOG_LEVEL}
+      NODE_ENV: production
+
+volumes:
+  db-data:

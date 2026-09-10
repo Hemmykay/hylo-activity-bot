@@ -1,0 +1,236 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── FAQ Knowledge Base ───────────────────────────────────────────────────────
+
+model FAQ {
+  id        String   @id @default(cuid())
+  title     String
+  question  String
+  answer    String   // Markdown
+  category  String
+  tags      String[] // quick filter
+  keywords  String[] // boosts FTS relevance ranking
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([isActive])
+  @@map("faqs")
+}
+
+// ─── FAQ Categories ───────────────────────────────────────────────────────────
+
+model FAQCategory {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String?
+  sortOrder   Int     @default(0)
+
+  @@map("faq_categories")
+}
+
+// ─── Pending Confirmations ────────────────────────────────────────────────────
+// Stores unconfirmed mutations so the bot can restart without losing state.
+// Button customId encodes the pendingActionId.
+
+model PendingAction {
+  id            String   @id @default(cuid())
+  // Set after the confirmation message is sent; used to edit the preview on modal submit
+  discordMsgId  String?  @unique
+  actorId       String   // Discord user ID
+  actorName     String   // Discord display name (for audit log)
+  actionType    ActionType
+  payload       Json     // The full mutation payload, ready to execute on confirm
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([actorId])
+  @@index([expiresAt])
+  @@map("pending_actions")
+}
+
+enum ActionType {
+  FAQ_CREATE
+  FAQ_UPDATE
+  FAQ_DELETE
+  VENUE_CREATE
+}
+
+enum AssetCategory {
+  LST
+  STABLECOIN
+  LEVER_TOKEN
+  YIELD_BEARING_TOKEN
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+// Every committed mutation is recorded here for the future dashboard.
+
+model AuditLog {
+  id         String     @id @default(cuid())
+  action     ActionType
+  entityType String     // "FAQ" | "FAQCategory"
+  entityId   String
+  before     Json?
+  after      Json?
+  actorId    String
+  actorName  String
+  createdAt  DateTime   @default(now())
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+// ─── Third-Party Venues ───────────────────────────────────────────────────────
+// Venues where Hylo assets can be deposited, each with their own XP structure.
+
+model Venue {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  // Explains HOW/WHY XP is calculated — e.g. "XP is based on combined LP position value"
+  context     String?
+  // Official URL for this venue
+  link        String?
+  // Key things users should understand before depositing — risks, mechanics, caveats
+  disclaimer  String?
+  isActive    Boolean  @default(true)
+  addedBy     String   // Discord user ID
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  assetXP     VenueAssetXP[]
+
+  @@index([isActive])
+  @@map("venues")
+}
+
+// ─── Hylo Native Assets ───────────────────────────────────────────────────────
+// Hylo's own tokens/assets (xSOL, hyUSD, etc.) — their characteristics,
+// mechanics, and considerations for users depositing them into third-party venues.
+
+model Asset {
+  id               String         @id @default(cuid())
+  symbol           String         @unique  // e.g. "HYLOSOL"
+  name             String                   // e.g. "Hylo Staked SOL"
+  emoji            String?                  // Discord custom emoji, e.g. "<:hyusd:123...>" — shown as a prefix wherever this asset is mentioned in bot-generated messages
+  description      String?                  // What it is and how it works
+  considerations   String?                  // Things users should understand — mechanics, risks, caveats
+  tokenAddress     String?                  // Solana mint address — enables on-chain data queries
+  category         AssetCategory?           // LST | STABLECOIN | LEVER_TOKEN | YIELD_BEARING_TOKEN
+  stakeVault       String?                  // LST only: comma-separated stake account addresses
+  collateralWallet String?                  // Yield-bearing only: collateral wallet address
+  capUsd           Float?                   // Optional protocol-enforced supply cap, in USD — enables a progress-bar display (current value vs. cap)
+  lastAnnouncedCapMilestoneUsd Float?        // Last $100K cap-progress milestone posted to Discord — persisted (unlike mint/burn checkpoints) since this is a single monotonic progress value, not a stream of discrete events; there's no "backfill" risk in remembering it across restarts
+  isActive         Boolean        @default(true)
+  addedBy          String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  venueXP          VenueAssetXP[]
+
+  @@index([isActive])
+  @@map("assets")
+}
+
+// ─── Venue ↔ Asset XP Links ───────────────────────────────────────────────────
+// Real relation between a Venue and a Hylo Asset: "this venue pays this much
+// XP for this asset". Replaces the old free-text Venue.assets JSON field.
+
+model VenueAssetXP {
+  id        String   @id @default(cuid())
+  venueId   String
+  assetId   String
+  xpRate    String
+  notes     String?
+  venue     Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([venueId, assetId])
+  @@index([assetId])
+  @@map("venue_asset_xp")
+}
+
+// ─── Correction Log ───────────────────────────────────────────────────────────
+// Every admin correction is persisted here, even when the bot cannot structure
+// a FAQ from it. Admins can audit these via /corrections list.
+
+model Correction {
+  id               String   @id @default(cuid())
+  actorId          String   // Discord user ID of the correcting admin
+  actorName        String
+  originalQuestion String   // The customer's original question
+  wrongBotAnswer   String   // What the bot said that was incorrect
+  rawCorrection    String   // The admin's verbatim correction
+  structured       Boolean  @default(false) // true once a FAQ was created/updated from this
+  faqAction        String?  // 'created' | 'updated' | 'no_change'
+  faqTitle         String?  // Title of the FAQ that was created or updated
+  createdAt        DateTime @default(now())
+
+  @@index([structured])
+  @@index([actorId])
+  @@index([createdAt])
+  @@map("corrections")
+}
+
+// ─── Mint Flow Events ─────────────────────────────────────────────────────────
+// Rolling accumulator for the daily inflow/outflow summary — NOT a permanent
+// audit ledger. Every detected mint/burn is recorded here as it happens;
+// once a day the summary job sums everything present, posts it, and wipes
+// the table so the next window starts clean. A restart doesn't lose the
+// current window's data (unlike the in-memory tick checkpoints), but nothing
+// here is meant to be queried for history beyond "since the last post".
+
+model MintFlowEvent {
+  id        String   @id @default(cuid())
+  symbol    String   // e.g. "HYUSD", "XSOL", "HYLOSOL", "HYLOSOL+"
+  kind      FlowKind
+  amount    Float    // decimal-adjusted UI amount
+  createdAt DateTime @default(now())
+
+  @@index([symbol])
+  @@map("mint_flow_events")
+}
+
+enum FlowKind {
+  MINT
+  BURN
+}
+
+// Rolling NAV history for the price-ticker bots' 24h-change display (see
+// price-ticker.service.ts). xASSET leverage is not constant, so 24h is
+// this recorded NAV vs now rather than live leverage × the underlying's
+// move. Recorded once per tick, pruned past ~48h.
+model PriceSnapshot {
+  id         String   @id @default(cuid())
+  symbol     String
+  price      Float
+  capturedAt DateTime @default(now())
+
+  @@index([symbol, capturedAt])
+  @@map("price_snapshots")
+}
+
+// ─── Search Logs ─────────────────────────────────────────────────────────────
+// Analytics feed for the future dashboard.
+
+model SearchLog {
+  id          String   @id @default(cuid())
+  query       String
+  resultCount Int
+  topScore    Float?
+  actorId     String
+  createdAt   DateTime @default(now())
+
+  @@index([actorId])
+  @@map("search_logs")
+}

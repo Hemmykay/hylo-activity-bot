@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Prisma
+prisma/migrations/dev/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# DB dumps taken during migrations/backups (never commit data)
+/dump.sql
+*.dump
+
+# TypeScript
+*.tsbuildinfo
