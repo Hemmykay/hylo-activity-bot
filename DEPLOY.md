@@ -41,24 +41,39 @@ git push -u origin main
 3. In the service's **Environment** tab, add every variable from the local
    `.env` **except** `DATABASE_URL` and `NODE_ENV` (compose sets those), plus
    one new one:
-   - `DB_PASSWORD` — a strong password for the new Postgres
-   - `DATABASE_URL` is wired inside compose to
-     `postgres://hylo:${DB_PASSWORD}@db:5432/hylo_support`
+   - `DB_PASSWORD` — this is a password you CREATE, not fetch: generate one on
+     your Mac with `openssl rand -hex 24` and paste the output. You set it once
+     here; compose uses it both to initialize the Postgres user and to build
+     the bot's `DATABASE_URL` (`postgres://hylo:${DB_PASSWORD}@db:5432/hylo_support`).
+   - To change/view it later: the same Environment tab (Dokploy stores it).
 4. Deploy. First build takes a few minutes (npm ci + prisma engines).
 
 ### 3. Restore the database contents
 The empty Postgres gets its schema automatically on boot (`migrate deploy`),
 but the bot's data must come from the current machine — Asset rows (mints,
-stake vaults, collateral wallets, cap, emoji), FAQ, venues, corrections:
-```bash
-# on this Mac — dump the live DB
-pg_dump --no-owner --no-privileges hylo_support > dump.sql
+stake vaults, collateral wallets, cap, emoji), FAQ, venues, corrections.
 
-# restore into the dokploy Postgres (get the external port/creds from Dokploy's DB tab)
-psql "postgres://hylo:<DB_PASSWORD>@<vps-host>:<external-port>/hylo_support" < dump.sql
+`--clean --if-exists` makes the dump a drop-and-recreate restore, so it is
+safe to apply at ANY point — before or after the new bot has already booted
+and migrated (no CREATE TABLE collisions):
+
+```bash
+# on this Mac — dump the live DB (re-run this at cutover for the freshest data)
+pg_dump -h localhost -U mac --no-owner --no-privileges --clean --if-exists hylo_support > dump.sql
+
+# copy it to the VPS
+scp dump.sql root@<vps-host>:/tmp/
+
+# on the VPS — find the Postgres container and restore into it
+ssh root@<vps-host>
+docker ps --format '{{.Names}}' | grep -i postgres     # e.g. hylo-db-1
+docker exec -i <postgres-container-name> psql -U hylo -d hylo_support < /tmp/dump.sql
+
+# sanity check — should list the tracked assets (7 rows)
+docker exec -it <postgres-container-name> psql -U hylo -d hylo_support -c 'SELECT symbol, active FROM "Asset";'
 ```
-(The restore can happen before or after the first bot deploy; do it before
-opening the bot to users so FAQ/venue answers work immediately.)
+
+Do this before opening the bot to users so FAQ/venue answers work immediately.
 
 ### 4. Cutover — stop the Mac instance FIRST or immediately after
 ```bash
