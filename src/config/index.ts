@@ -57,6 +57,14 @@ const envSchema = z.object({
   MIN_VAL_REPORT: z.coerce.number().min(0).default(0),
   // Optional — the eHYUSD cap-progress milestone poster is disabled until this is set.
   EHYUSD_CAP_CHANNEL_ID: z.string().optional(),
+  // Optional — eHYUSD supply cap in USD. When set, overrides the Asset row's
+  // capUsd for both the milestone watcher and /ehyusd-cap. An empty value
+  // counts as unset (Dokploy env fields can hold ""); a malformed value fails
+  // startup rather than silently falling back to the DB.
+  EHYUSD_CAP_USD: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.coerce.number().positive().optional(),
+  ),
 
   // ─── Price-Ticker Bots ──────────────────────────────────────────────────────
   // Each is its own separate Discord bot application/token (a Discord member-list
@@ -210,6 +218,7 @@ function loadConfig() {
     },
     ehyusdCap: {
       channelId: env.EHYUSD_CAP_CHANNEL_ID || null,
+      capUsd: env.EHYUSD_CAP_USD ?? null,
     },
     // Symbol -> bot token, omitting any asset whose token isn't configured.
     priceTickers: (

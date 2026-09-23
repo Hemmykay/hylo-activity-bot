@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, type ChatInputCommandInteraction } from 'discord.js';
 import { assetRepository } from '@/db/repositories/asset.repository.js';
 import { resolveEHYUSDPriceAndSupply } from '@/services/price/asset-price.service.js';
-import { formatCapMessage } from '@/services/mint-watcher/ehyusd-cap-watcher.service.js';
+import { formatCapMessage, resolveEhyusdCapUsd } from '@/services/mint-watcher/ehyusd-cap-watcher.service.js';
 import { assertAuthorizedInteraction, replyWithError } from '@/lib/discord-utils.js';
 
 export const data = new SlashCommandBuilder()
@@ -14,7 +14,8 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
 
   try {
     const eHYUSDAsset = await assetRepository.findBySymbol('EHYUSD');
-    if (!eHYUSDAsset?.capUsd) {
+    const capUsd = resolveEhyusdCapUsd(eHYUSDAsset ?? undefined);
+    if (!capUsd) {
       await interaction.editReply('eHYUSD does not have a cap configured yet.');
       return;
     }
@@ -28,7 +29,7 @@ export async function execute(interaction: ChatInputCommandInteraction): Promise
     }
 
     const currentUsd = resolved.price * resolved.supply;
-    await interaction.editReply(formatCapMessage('eHYUSD', eHYUSDAsset.emoji, currentUsd, eHYUSDAsset.capUsd));
+    await interaction.editReply(formatCapMessage('eHYUSD', eHYUSDAsset?.emoji ?? null, currentUsd, capUsd));
   } catch (err) {
     await replyWithError(interaction, err);
   }

@@ -50,6 +50,16 @@ export function formatCapMessage(label: string, emoji: string | null, currentUsd
   return `**${emojiPart}${label}: ** (${fmtUsdM(currentUsd)} / ${fmtUsdM(capUsd)})\n${bar} ${pct}%`;
 }
 
+/**
+ * The effective eHYUSD supply cap in USD: the EHYUSD_CAP_USD env var when set,
+ * otherwise the Asset row's capUsd. Both the milestone watcher and the
+ * /ehyusd-cap command resolve through this so the two surfaces can never
+ * disagree about what the cap is.
+ */
+export function resolveEhyusdCapUsd(eHYUSDAsset: Asset | undefined): number | null {
+  return config.ehyusdCap.capUsd ?? eHYUSDAsset?.capUsd ?? null;
+}
+
 async function postMilestone(client: Client, currentUsd: number, capUsd: number, emoji: string | null): Promise<void> {
   const channelId = config.ehyusdCap.channelId;
   if (!channelId) return;
@@ -62,19 +72,20 @@ export async function checkEHYUSDCapMilestone(client: Client, assetMap: Map<stri
   if (!config.ehyusdCap.channelId) return;
 
   const eHYUSDAsset = assetMap.get('EHYUSD');
-  if (!eHYUSDAsset?.capUsd) return;
+  const capUsd = resolveEhyusdCapUsd(eHYUSDAsset);
+  if (!capUsd) return;
 
   const resolved = await resolveEHYUSDPriceAndSupply(assetMap);
   if (!resolved) return;
 
   const currentUsd = resolved.price * resolved.supply;
   const currentMilestone = floorToMilestone(currentUsd);
-  const lastAnnouncedMilestoneUsd = eHYUSDAsset.lastAnnouncedCapMilestoneUsd;
+  const lastAnnouncedMilestoneUsd = eHYUSDAsset?.lastAnnouncedCapMilestoneUsd ?? null;
 
   if (lastAnnouncedMilestoneUsd === null) {
     const overshoot = currentUsd - currentMilestone;
     if (currentMilestone > 0 && overshoot <= COLD_START_CLOSE_TOLERANCE_USD) {
-      await postMilestone(client, currentUsd, eHYUSDAsset.capUsd, eHYUSDAsset.emoji);
+      await postMilestone(client, currentUsd, capUsd, eHYUSDAsset?.emoji ?? null);
       logger.info({ milestone: currentMilestone, currentUsd, overshoot }, 'eHYUSD cap milestone announced (first run, close enough)');
     } else {
       logger.info({ milestone: currentMilestone, currentUsd, overshoot }, 'eHYUSD cap milestone baseline set silently (first run, not close)');
@@ -84,7 +95,7 @@ export async function checkEHYUSDCapMilestone(client: Client, assetMap: Map<stri
   }
 
   if (currentMilestone > lastAnnouncedMilestoneUsd) {
-    await postMilestone(client, currentUsd, eHYUSDAsset.capUsd, eHYUSDAsset.emoji);
+    await postMilestone(client, currentUsd, capUsd, eHYUSDAsset?.emoji ?? null);
     logger.info({ milestone: currentMilestone, previousMilestone: lastAnnouncedMilestoneUsd, currentUsd }, 'eHYUSD cap milestone announced');
     await assetRepository.updateLastAnnouncedCapMilestone('EHYUSD', currentMilestone);
   }
