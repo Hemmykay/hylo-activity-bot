@@ -26,7 +26,7 @@ export type SupportedInteraction =
 
 // ─── Authorization ────────────────────────────────────────────────────────────
 // Access requires BOTH: the user's ID is in ALLOWED_USER_IDS, AND they hold
-// REQUIRED_ROLE_ID.
+// at least one role in REQUIRED_ROLE_IDS.
 //
 // Role membership is always checked via a FRESH guild.members.fetch() rather
 // than trusting interaction.member/message.member's role cache directly —
@@ -40,7 +40,9 @@ export type SupportedInteraction =
 async function hasRequiredRole(guild: Guild | null, userId: string): Promise<boolean> {
   if (!guild) return false;
   const member = await guild.members.fetch(userId).catch(() => null);
-  return member ? member.roles.cache.has(config.discord.requiredRoleId) : false;
+  return member
+    ? config.discord.requiredRoleIds.some((roleId) => member.roles.cache.has(roleId))
+    : false;
 }
 
 /** Guild-context boolean check (slash commands, context menus, buttons, modals, @mentions). */

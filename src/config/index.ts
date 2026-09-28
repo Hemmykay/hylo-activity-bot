@@ -14,8 +14,12 @@ const envSchema = z.object({
     .string()
     .min(1, 'ALLOWED_USER_IDS must contain at least one Discord user ID')
     .transform((val) => val.split(',').map((id) => id.trim()).filter(Boolean)),
-  // Discord role ID required (alongside ALLOWED_USER_IDS) to use the bot.
-  REQUIRED_ROLE_ID: z.string().min(1, 'REQUIRED_ROLE_ID is required'),
+  // Discord role IDs allowed (alongside ALLOWED_USER_IDS) to use the bot —
+  // holding ANY one of these roles satisfies the role check.
+  REQUIRED_ROLE_IDS: z
+    .string()
+    .min(1, 'REQUIRED_ROLE_IDS must contain at least one Discord role ID')
+    .transform((val) => val.split(',').map((id) => id.trim()).filter(Boolean)),
 
   // ─── AI Provider Chain ─────────────────────────────────────────────────────
   // Ordered comma-separated list. Tried left-to-right until one succeeds.
@@ -182,7 +186,7 @@ function loadConfig() {
       token: env.DISCORD_TOKEN,
       clientId: env.DISCORD_CLIENT_ID,
       allowedUserIds: env.ALLOWED_USER_IDS,
-      requiredRoleId: env.REQUIRED_ROLE_ID,
+      requiredRoleIds: env.REQUIRED_ROLE_IDS,
     },
     ai: {
       providerChain,
