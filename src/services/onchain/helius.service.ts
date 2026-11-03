@@ -57,6 +57,15 @@ export interface TokenOnchainData {
 const RPC_MAX_RETRIES = 4;
 const RPC_RETRY_BASE_MS = 400;
 
+// getTransaction rejects any transaction whose version is above this with RPC error
+// -32015 ("Transaction version (1) is not supported by the requesting client"). Solana's
+// version-1 transactions are now common (most recent hyloSOL activity), and the rejection
+// throws inside the mint/burn scans — so one v1 transaction fails the whole page instead of
+// being skipped. 1 is the highest version verified to return the same jsonParsed shapes
+// (message.instructions, meta.innerInstructions, token balances) these parsers read; raise it
+// deliberately when Solana ships a newer version rather than guessing at an unseen format.
+const MAX_SUPPORTED_TX_VERSION = 1;
+
 // Pricing reads (balances, supplies, account data) are reused across the
 // mint-watcher tick, four ticker bots, and the eHYUSD cap check — all of
 // which fire ~every 60s and often overlap. 50s is just under that interval
@@ -688,7 +697,7 @@ export async function queryMintEvents(
       if (err) continue;
       const tx = await rpc<ParsedTransaction | null>('getTransaction', [
         signature,
-        { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+        { encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_SUPPORTED_TX_VERSION },
       ]);
       if (!tx) continue;
 
@@ -770,7 +779,7 @@ export async function queryBurnEvents(
       if (err) continue;
       const tx = await rpc<ParsedTransaction | null>('getTransaction', [
         signature,
-        { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+        { encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_SUPPORTED_TX_VERSION },
       ]);
       if (!tx) continue;
 
@@ -870,7 +879,7 @@ export async function queryPoolRebalanceEvents(
       if (err) continue;
       const tx = await rpc<ParsedTransaction | null>('getTransaction', [
         signature,
-        { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+        { encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_SUPPORTED_TX_VERSION },
       ]);
       if (!tx) continue;
 
@@ -1039,7 +1048,7 @@ export async function queryRecentPoolRebalanceEvents(
       const txs = await mapWithConcurrency(clean, GET_TRANSACTION_CONCURRENCY, ({ signature }) =>
         rpc<ParsedTransaction | null>('getTransaction', [
           signature,
-          { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+          { encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_SUPPORTED_TX_VERSION },
         ]),
       );
 
@@ -1144,7 +1153,7 @@ export async function queryStakeEvents(
       if (err) continue;
       const tx = await rpc<ParsedTransaction | null>('getTransaction', [
         signature,
-        { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+        { encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_SUPPORTED_TX_VERSION },
       ]);
       if (!tx?.meta) continue;
 
@@ -1205,7 +1214,7 @@ export async function classifyTransaction(
   try {
     const tx = await rpc<ParsedTransaction | null>('getTransaction', [
       signature,
-      { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+      { encoding: 'jsonParsed', maxSupportedTransactionVersion: MAX_SUPPORTED_TX_VERSION },
     ]);
     if (!tx) return { success: true, data: { signature, found: false, failed: false, blockTime: null, flows: [], rebalance: null, stake: null } };
 
