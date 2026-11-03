@@ -1,7 +1,7 @@
 # Deploying to Dokploy
 
 The bot is a **worker**, not a web app: one Node process running the main
-Discord client plus four ticker-bot clients, all outbound-only (Discord
+Discord client plus up to five ticker-bot clients, all outbound-only (Discord
 gateway, Helius, api.hylo.so, Jupiter, X). It needs **no ports, no domain, no
 TLS** — only its Postgres database.
 
@@ -102,7 +102,7 @@ overlap under a minute.
 You want to see, in order:
 - `All migrations have been successfully applied.` (boot migrations)
 - `Starting Hylo Support Copilot` → `Database connection established`
-- `Ticker bot online` ×4 (XSOL, XBTC, XHYPE, eHYUSD)
+- `Ticker bot online` ×5 (XSOL, XBTC, XHYPE, XZEC, eHYUSD)
 - `Mint watcher started` then `Hylo API feed checkpoint seeded — alerting from now`
 - Within ~5 minutes: ticker nicknames updating in Discord, and (if anything
   happens on-chain) alerts posting via the feed path.
