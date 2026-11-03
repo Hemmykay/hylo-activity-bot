@@ -834,6 +834,7 @@ const DISPLAY_ORDER: Array<{ symbol: string; label: string }> = [
   { symbol: 'XSOL', label: 'xSOL' },
   { symbol: 'XBTC', label: 'xBTC' },
   { symbol: 'XHYPE', label: 'xHYPE' },
+  { symbol: 'XZEC', label: 'xZEC' },
   { symbol: 'HYLOSOL', label: 'hyloSOL' },
   { symbol: 'HYLOSOL+', label: 'hyloSOL+' },
 ];

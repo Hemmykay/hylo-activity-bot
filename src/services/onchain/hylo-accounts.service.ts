@@ -38,6 +38,10 @@ const EXO_PAIR_ACCOUNTS: Record<string, string> = {
   // fields: collateral_mint round-trips to this same HYPE mint, and levercoin_mint round-trips
   // to XHYPE's own token address — so this isn't just "a valid PDA", it's confirmed live.
   '98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g': '42GzNWvZ1H1hwXaBZ8mbeVZaSEgh6zMm8BABdS3v1BEB',
+  // ZEC's exo_pair — live since 2026-11. Same derivation and same on-chain cross-check as HYPE's:
+  // the PDA from seeds ("exo_pair" + ZEC mint) equals the ExoPair account whose collateral_mint is
+  // ZEC, and the xZEC mint PDA's supply matches Hylo's API levercoin_supply exactly.
+  A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS: 'Atssq1iqXhUrPX1qV9e2UyQCWdeAd6DXQrccK9eu3Bc',
 };
 
 /** The SOL/LST pool's own virtual-stablecoin supply — the hyUSD backing attributed to the SOL pool specifically. */

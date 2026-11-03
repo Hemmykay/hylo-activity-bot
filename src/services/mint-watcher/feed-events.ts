@@ -44,6 +44,7 @@ export interface FeedEvent {
 const EXO_SYMBOL_BY_COLLATERAL: Record<string, string> = {
   cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij: 'XBTC', // cbBTC
   '98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g': 'XHYPE', // HYPE
+  A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS: 'XZEC', // ZEC
 };
 
 function num(value: unknown): number | null {

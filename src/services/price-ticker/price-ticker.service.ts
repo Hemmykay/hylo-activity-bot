@@ -7,7 +7,7 @@
  *    "↑ $0.05 (+2.34%) · 2.63x".
  *    24h is current NAV vs a NAV we recorded ~24h ago (see
  *    priceSnapshotRepository) — not live leverage × the underlying's 24h
- *    move. Effective leverage on xSOL/xBTC/xHYPE is not constant over that
+ *    move. Effective leverage on xSOL/xBTC/xHYPE/xZEC is not constant over that
  *    window, so scaling the oracle move by today's multiplier would misstate
  *    the token. Until a symbol has 24h of snapshots, we bootstrap from
  *    resolveImpliedPastPrice (DEX % for eHYUSD, composition-constant

@@ -4,7 +4,7 @@
  * intent-router.ts — a third caller (rag.service.ts, converting a token count
  * to a dollar amount for XP math) made a shared helper worth it.
  *
- * xSOL/xBTC/xHYPE try https://api.hylo.so/market-state first (same NAV
+ * xSOL/xBTC/xHYPE/xZEC try https://api.hylo.so/market-state first (same NAV
  * identity as the on-chain formula). A down, malformed, or stale payload
  * falls through to the Helius path so pricing stays live.
  */
@@ -14,6 +14,7 @@ import { queryXSOLPrice, type XSOLPriceParams } from './xsol.service.js';
 import { queryEHYUSDPrice } from './ehyusd.service.js';
 import { queryXBTCPrice } from './xbtc.service.js';
 import { queryXHYPEPrice } from './xhype.service.js';
+import { queryXZECPrice } from './xzec.service.js';
 import { queryPrice } from './jupiter-price.service.js';
 import { queryMarketStateLevercoin, type LevercoinSymbol } from './market-state.service.js';
 import { queryEhyusdEarnPool, queryLatestTokenPrice } from '@/services/hylo-api/hylo-api.service.js';
@@ -24,7 +25,7 @@ const logger = createLogger('asset-price');
 interface CachedPrice {
   price: number;
   asOf: number;
-  /** Present for leverage tokens (xSOL/xBTC/xHYPE) when the live formula produced a finite value. */
+  /** Present for leverage tokens (xSOL/xBTC/xHYPE/xZEC) when the live formula produced a finite value. */
   effectiveLeverage?: number;
   /** eHYUSD supply, so the cap watcher can reuse the ticker's last resolution. */
   supply?: number;
@@ -59,6 +60,7 @@ const LEVERAGED_UNDERLYING: Record<string, string> = {
   XSOL: 'SOL',
   XBTC: 'BTC',
   XHYPE: 'HYPE',
+  XZEC: 'ZEC',
 };
 
 function finitePositive(n: number | undefined): number | undefined {
@@ -201,7 +203,7 @@ export async function resolveEHYUSDPriceAndSupply(assets: Map<string, Asset>): P
 }
 
 /**
- * xSOL/xBTC/xHYPE: Hylo market-state first (one HTTP call, same NAV identity
+ * xSOL/xBTC/xHYPE/xZEC: Hylo market-state first (one HTTP call, same NAV identity
  * as the on-chain formula). Null/stale/down → existing Helius path so
  * tickers stay live. LST / eHYUSD NAV are not in that payload.
  */
@@ -268,6 +270,15 @@ async function resolveLivePriceUsd(symbol: string, assets: Map<string, Asset>): 
       const xHYPE = assets.get('XHYPE');
       if (!xHYPE?.tokenAddress || !xHYPE.collateralWallet) return null;
       const result = await queryXHYPEPrice({ collateralWallet: xHYPE.collateralWallet, xHYPEMint: xHYPE.tokenAddress });
+      return result.success ? livePrice(result.data.price, result.data.effectiveLeverage) : null;
+    });
+  }
+
+  if (symbol === 'XZEC') {
+    return resolveLevercoinLive('XZEC', async () => {
+      const xZEC = assets.get('XZEC');
+      if (!xZEC?.tokenAddress || !xZEC.collateralWallet) return null;
+      const result = await queryXZECPrice({ collateralWallet: xZEC.collateralWallet, xZECMint: xZEC.tokenAddress });
       return result.success ? livePrice(result.data.price, result.data.effectiveLeverage) : null;
     });
   }
