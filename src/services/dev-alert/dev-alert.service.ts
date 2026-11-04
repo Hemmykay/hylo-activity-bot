@@ -85,17 +85,27 @@ export function setDevAlertClient(client: Client): void {
  * pass a stable key (e.g. `shard-disconnect-0`) for recurring faults so
  * repeats collapse instead of spamming.
  */
-export async function notifyDev(title: string, details?: string, key?: string): Promise<void> {
+export async function notifyDev(
+  title: string,
+  details?: string,
+  key?: string,
+  opts?: {
+    /** Override the 10-minute default; 0 disables throttling for callers that dedupe themselves. */
+    cooldownMs?: number;
+    /** Replaces the "🛠️ **Dev alert**" headline, e.g. for non-fault notices. */
+    label?: string;
+  },
+): Promise<void> {
   const alertKey = key ?? title;
   const now = Date.now();
-  if (now - (lastSentAt.get(alertKey) ?? 0) < COOLDOWN_MS) {
+  if (now - (lastSentAt.get(alertKey) ?? 0) < (opts?.cooldownMs ?? COOLDOWN_MS)) {
     logger.debug({ alertKey }, 'Dev alert suppressed by cooldown');
     return;
   }
   lastSentAt.set(alertKey, now);
 
   const body = details ? `${title}\n${details}` : title;
-  await sendNow(`🛠️ **Dev alert** — ${truncate(body, MAX_CONTENT_CHARS)}`);
+  await sendNow(`${opts?.label ?? '🛠️ **Dev alert**'} — ${truncate(body, MAX_CONTENT_CHARS)}`);
 }
 
 /** notifyDev() specialised for errors — formats the reason automatically. */
