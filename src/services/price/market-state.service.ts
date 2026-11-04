@@ -36,6 +36,7 @@ interface UFixJson {
 }
 
 interface PoolContextJson {
+  rebalance_mode?: string;
   total_value_locked?: UFixJson;
   virtual_stablecoin_supply?: UFixJson;
   levercoin_supply?: UFixJson;
@@ -60,10 +61,26 @@ const POOL_BY_SYMBOL: Record<LevercoinSymbol, keyof NonNullable<MarketStateJson[
   XZEC: 'zec',
 };
 
+/**
+ * Looser read of a pool than MarketStateLevercoin: kept even when the pool is so unhealthy that
+ * the NAV identity breaks (debt >= collateral), which parsePool rejects but a monitor most needs.
+ */
+export interface PoolHealth {
+  tvlUsd: number;
+  /** The pool's own hyUSD backing (virtual stablecoin supply). */
+  debtUsd: number;
+  collateralRatio: number | null;
+  /** TVL / (TVL − debt); null when there is no equity left. */
+  leverage: number | null;
+  /** Hylo's own rebalance-zone label, e.g. "Neutral", "BuyZone1", "SellZone2". */
+  zone: string | null;
+}
+
 interface Snapshot {
   fetchedAt: number;
   payloadUnix: number;
   levercoins: Partial<Record<LevercoinSymbol, MarketStateLevercoin>>;
+  health: Partial<Record<LevercoinSymbol, PoolHealth>>;
 }
 
 let snapshotCache: Snapshot | null = null;
@@ -96,6 +113,22 @@ function parsePool(ctx: PoolContextJson | undefined): MarketStateLevercoin | nul
   return { price, effectiveLeverage, tvl, virtualStablecoinUsd: vUsd, supply, collateralRatio };
 }
 
+function parseHealth(ctx: PoolContextJson | undefined): PoolHealth | null {
+  if (!ctx) return null;
+  const tvlUsd = ufixToNumber(ctx.total_value_locked);
+  const debtUsd = ufixToNumber(ctx.virtual_stablecoin_supply);
+  if (tvlUsd === null || debtUsd === null || !(tvlUsd >= 0) || !(debtUsd >= 0)) return null;
+  const cr = ufixToNumber(ctx.collateral_ratio);
+  const equity = tvlUsd - debtUsd;
+  return {
+    tvlUsd,
+    debtUsd,
+    collateralRatio: cr !== null && cr > 0 ? cr : debtUsd > 0 ? tvlUsd / debtUsd : null,
+    leverage: equity > 0 && tvlUsd > 0 ? tvlUsd / equity : null,
+    zone: typeof ctx.rebalance_mode === 'string' ? ctx.rebalance_mode : null,
+  };
+}
+
 function parseSnapshot(json: MarketStateJson, fetchedAt: number): Snapshot | null {
   if (json.schema_version !== 1) return null;
   if (typeof json.unix_timestamp !== 'number' || !Number.isFinite(json.unix_timestamp)) return null;
@@ -108,13 +141,17 @@ function parseSnapshot(json: MarketStateJson, fetchedAt: number): Snapshot | nul
   }
 
   const levercoins: Snapshot['levercoins'] = {};
+  const health: Snapshot['health'] = {};
   for (const symbol of Object.keys(POOL_BY_SYMBOL) as LevercoinSymbol[]) {
-    const parsed = parsePool(json.contexts?.[POOL_BY_SYMBOL[symbol]]);
+    const ctx = json.contexts?.[POOL_BY_SYMBOL[symbol]];
+    const parsed = parsePool(ctx);
     if (parsed) levercoins[symbol] = parsed;
+    const h = parseHealth(ctx);
+    if (h) health[symbol] = h;
   }
-  if (Object.keys(levercoins).length === 0) return null;
+  if (Object.keys(levercoins).length === 0 && Object.keys(health).length === 0) return null;
 
-  return { fetchedAt, payloadUnix: json.unix_timestamp, levercoins };
+  return { fetchedAt, payloadUnix: json.unix_timestamp, levercoins, health };
 }
 
 async function fetchSnapshot(): Promise<Snapshot | null> {
@@ -152,4 +189,10 @@ async function getSnapshot(): Promise<Snapshot | null> {
 export async function queryMarketStateLevercoin(symbol: LevercoinSymbol): Promise<MarketStateLevercoin | null> {
   const snapshot = await getSnapshot();
   return snapshot?.levercoins[symbol] ?? null;
+}
+
+/** Per-pool health for the pool watcher. Null means the API was unavailable or stale — never throws. */
+export async function queryAllPoolHealth(): Promise<Partial<Record<LevercoinSymbol, PoolHealth>> | null> {
+  const snapshot = await getSnapshot();
+  return snapshot ? snapshot.health : null;
 }

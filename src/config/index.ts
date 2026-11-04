@@ -52,6 +52,11 @@ const envSchema = z.object({
   HYLO_API_BASE_URL: z.string().optional(),
   HYLO_V1_EVENTS_DISABLED: z.string().optional(),
 
+  // ─── Pool Watch ─────────────────────────────────────────────────────────────
+  // DMs the dev (see devAlert) when a collateral pool's hyUSD backing, leverage, or rebalance
+  // zone moves sharply. Set POOL_WATCH_DISABLED=1 to turn it off.
+  POOL_WATCH_DISABLED: z.string().optional(),
+
   // ─── Mint Watcher ───────────────────────────────────────────────────────────
   // Optional — the background mint-alert watcher is disabled until this is set.
   MINT_ALERTS_CHANNEL_ID: z.string().optional(),
@@ -212,6 +217,9 @@ function loadConfig() {
         'https://api.mainnet-beta.solana.com',
       ],
       enabled: Boolean(env.HELIUS_API_KEY),
+    },
+    poolWatch: {
+      disabled: env.POOL_WATCH_DISABLED === '1',
     },
     hyloApi: {
       baseUrl: env.HYLO_API_BASE_URL || 'https://api.hylo.so',

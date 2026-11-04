@@ -8,6 +8,7 @@ import { Events } from 'discord.js';
 import { pendingActionRepository } from './db/repositories/pending-action.repository.js';
 import { startMintWatcher } from './services/mint-watcher/mint-watcher.service.js';
 import { startPriceTickers, stopPriceTickers } from './services/price-ticker/price-ticker.service.js';
+import { startPoolWatch, stopPoolWatch } from './services/pool-watch/pool-watch.service.js';
 import { setDevAlertClient, notifyDevError } from './services/dev-alert/dev-alert.service.js';
 
 const logger = createLogger('main');
@@ -78,6 +79,7 @@ async function main() {
     );
     startMintWatcher(client);
     startPriceTickers();
+    startPoolWatch();
   });
 
   // 6. Connect to Discord
@@ -86,6 +88,7 @@ async function main() {
 
 async function shutdown(signal: string) {
   logger.info({ signal }, 'Shutting down gracefully');
+  stopPoolWatch();
   await stopPriceTickers();
   await client.destroy();
   await prisma.$disconnect();
