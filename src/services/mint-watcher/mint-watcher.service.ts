@@ -57,10 +57,19 @@ const checkpoints = new Map<string, string>();
 // Same idea, tracked separately since burns are polled independently of mints.
 const burnCheckpoints = new Map<string, string>();
 
-/** Best-effort ledger write for the daily summary — a DB hiccup here must never take down the tick. */
-async function recordFlow(symbol: string, kind: 'MINT' | 'BURN', amount: number): Promise<void> {
+/**
+ * Best-effort ledger write for the daily summary — a DB hiccup here must never take down the tick.
+ *
+ * Idempotent: the same on-chain leg (signature + symbol + direction + amount) is stored once, no
+ * matter how many times a scanner reports it. The feed path and the RPC fallback can overlap
+ * (e.g. when the feed resumes after an outage) and a restart loses the in-memory checkpoints, so
+ * without this the daily totals double-count whatever gets re-read. The amount is part of the key
+ * so two distinct legs of the same kind inside one transaction still both count; it is rounded
+ * because the feed gives decimal strings while the RPC path divides raw integers.
+ */
+async function recordFlow(symbol: string, kind: 'MINT' | 'BURN', amount: number, signature: string): Promise<void> {
   try {
-    await mintFlowRepository.record(symbol, kind, amount);
+    await mintFlowRepository.record(symbol, kind, amount, `${signature}:${symbol}:${kind}:${amount.toFixed(4)}`);
   } catch (err) {
     logger.warn({ err, symbol, kind, amount }, 'Failed to record flow event — daily summary will undercount this one');
   }
@@ -239,7 +248,7 @@ async function tickGenericMintAsset(client: Client, asset: Asset, assetMap: Map<
     for (const event of events) {
       const amount = toUiAmount(event.amount, decimals, { symbol: asset.symbol, signature: event.signature, kind: 'MINT' });
       if (amount === null) continue;
-      await recordFlow(asset.symbol, 'MINT', amount);
+      await recordFlow(asset.symbol, 'MINT', amount, event.signature);
       if (!meetsReportThreshold(amount, price)) {
         logger.debug({ symbol: asset.symbol, amount, price, signature: event.signature }, 'Mint below MIN_VAL_REPORT — not posted');
         continue;
@@ -252,7 +261,7 @@ async function tickGenericMintAsset(client: Client, asset: Asset, assetMap: Map<
     for (const event of burnEvents) {
       const amount = toUiAmount(event.amount, decimals, { symbol: asset.symbol, signature: event.signature, kind: 'BURN' });
       if (amount === null) continue;
-      await recordFlow(asset.symbol, 'BURN', amount);
+      await recordFlow(asset.symbol, 'BURN', amount, event.signature);
     }
   }
 
@@ -315,7 +324,7 @@ async function tickHyUSDAsset(client: Client, hyUSDAsset: Asset, assetMap: Map<s
     for (const event of mintEvents) {
       const amount = toUiAmount(event.amount, decimals, { symbol: 'HYUSD', signature: event.signature, kind: 'MINT' });
       if (amount === null) continue;
-      await recordFlow('HYUSD', 'MINT', amount);
+      await recordFlow('HYUSD', 'MINT', amount, event.signature);
       if (!meetsReportThreshold(amount, price)) {
         logger.debug({ symbol: 'HYUSD', amount, price, signature: event.signature }, 'Mint below MIN_VAL_REPORT — not posted');
         continue;
@@ -327,7 +336,7 @@ async function tickHyUSDAsset(client: Client, hyUSDAsset: Asset, assetMap: Map<s
     for (const event of burnEvents) {
       const amount = toUiAmount(event.amount, decimals, { symbol: 'HYUSD', signature: event.signature, kind: 'BURN' });
       if (amount === null) continue;
-      await recordFlow('HYUSD', 'BURN', amount);
+      await recordFlow('HYUSD', 'BURN', amount, event.signature);
     }
   }
 
@@ -342,8 +351,8 @@ async function tickHyUSDAsset(client: Client, hyUSDAsset: Asset, assetMap: Map<s
       const hyUSDAmount = toUiAmount(event.mintedAmount, hyUSDDecimals, { symbol: 'HYUSD', signature: event.signature, leg: 'minted' });
       const xSOLAmount = toUiAmount(event.burnedAmount, xSOLDecimals, { symbol: 'XSOL', signature: event.signature, leg: 'burned' });
       if (hyUSDAmount === null || xSOLAmount === null) continue;
-      await recordFlow('HYUSD', 'MINT', hyUSDAmount);
-      await recordFlow('XSOL', 'BURN', xSOLAmount);
+      await recordFlow('HYUSD', 'MINT', hyUSDAmount, event.signature);
+      await recordFlow('XSOL', 'BURN', xSOLAmount, event.signature);
     }
   }
 
@@ -405,7 +414,7 @@ async function tickXSOLAsset(client: Client, xSOLAsset: Asset, assetMap: Map<str
     for (const event of mintEvents) {
       const amount = toUiAmount(event.amount, decimals, { symbol: 'XSOL', signature: event.signature, kind: 'MINT' });
       if (amount === null) continue;
-      await recordFlow('XSOL', 'MINT', amount);
+      await recordFlow('XSOL', 'MINT', amount, event.signature);
       if (!meetsReportThreshold(amount, price)) {
         logger.debug({ symbol: 'XSOL', amount, price, signature: event.signature }, 'Mint below MIN_VAL_REPORT — not posted');
         continue;
@@ -417,7 +426,7 @@ async function tickXSOLAsset(client: Client, xSOLAsset: Asset, assetMap: Map<str
     for (const event of burnEvents) {
       const amount = toUiAmount(event.amount, decimals, { symbol: 'XSOL', signature: event.signature, kind: 'BURN' });
       if (amount === null) continue;
-      await recordFlow('XSOL', 'BURN', amount);
+      await recordFlow('XSOL', 'BURN', amount, event.signature);
     }
   }
 
@@ -432,8 +441,8 @@ async function tickXSOLAsset(client: Client, xSOLAsset: Asset, assetMap: Map<str
       const xSOLAmount = toUiAmount(event.mintedAmount, xSOLDecimals, { symbol: 'XSOL', signature: event.signature, leg: 'minted' });
       const hyUSDAmount = toUiAmount(event.burnedAmount, hyUSDDecimals, { symbol: 'HYUSD', signature: event.signature, leg: 'burned' });
       if (xSOLAmount === null || hyUSDAmount === null) continue;
-      await recordFlow('XSOL', 'MINT', xSOLAmount);
-      await recordFlow('HYUSD', 'BURN', hyUSDAmount);
+      await recordFlow('XSOL', 'MINT', xSOLAmount, event.signature);
+      await recordFlow('HYUSD', 'BURN', hyUSDAmount, event.signature);
     }
   }
 
@@ -609,7 +618,7 @@ async function reportFeedActions(client: Client, actions: FeedAction[], assetMap
     try {
       if (action.kind === 'mint') {
         const price = await resolveAssetPriceUsd(action.symbol, assetMap);
-        await recordFlow(action.symbol, 'MINT', action.amount);
+        await recordFlow(action.symbol, 'MINT', action.amount, action.signature);
         if (!meetsReportThreshold(action.amount, price)) {
           logger.debug({ symbol: action.symbol, amount: action.amount, price, signature: action.signature }, 'Feed mint below MIN_VAL_REPORT — not posted');
           continue;
@@ -618,7 +627,7 @@ async function reportFeedActions(client: Client, actions: FeedAction[], assetMap
         logger.info({ symbol: action.symbol, amount: action.amount, signature: action.signature }, 'Mint alert posted (Hylo API feed)');
       } else if (action.kind === 'burn') {
         // No live alert for burns — the daily summary is the only surface (unchanged).
-        await recordFlow(action.symbol, 'BURN', action.amount);
+        await recordFlow(action.symbol, 'BURN', action.amount, action.signature);
       } else {
         const price = await resolveAssetPriceUsd('EHYUSD', assetMap);
         if (!meetsReportThreshold(action.amount, price)) {
@@ -687,11 +696,11 @@ async function watchPoolWalletRebalances(client: Client, assetMap: Map<string, A
 
       // Ledger gets every rebalance regardless of MIN_VAL_REPORT — same pairs as before.
       if (direction === 'OFFLOAD') {
-        await recordFlow('HYUSD', 'MINT', hyUSDUi);
-        await recordFlow('XSOL', 'BURN', xSOLUi);
+        await recordFlow('HYUSD', 'MINT', hyUSDUi, signature);
+        await recordFlow('XSOL', 'BURN', xSOLUi, signature);
       } else {
-        await recordFlow('XSOL', 'MINT', xSOLUi);
-        await recordFlow('HYUSD', 'BURN', hyUSDUi);
+        await recordFlow('XSOL', 'MINT', xSOLUi, signature);
+        await recordFlow('HYUSD', 'BURN', hyUSDUi, signature);
       }
     } catch (err) {
       logger.error({ err, signature }, 'Pool-wallet rebalance classification failed — continuing');
@@ -741,7 +750,10 @@ async function feedLaggingRealActivity(hyUSDMint: string | null): Promise<boolea
 
 /** Recovery probe while in RPC fallback: seed the feed checkpoint and report success without processing anything. */
 async function trySeedFeed(): Promise<boolean> {
-  const page = await getActivityPage({ limit: 1 });
+  // Seed a full page, like the first-boot seed does. Seeding only the newest event made the next
+  // tick treat the rest of the page (and up to two chased pages) as brand new, re-recording and
+  // re-alerting activity the RPC fallback had already reported.
+  const page = await getActivityPage({ limit: FEED_PAGE_LIMIT });
   if (!page.ok) {
     markFeedFailure(page.error);
     return false;

@@ -32,10 +32,14 @@ async function aggregate(client: Pick<typeof prisma.mintFlowEvent, 'groupBy' | '
 }
 
 export const mintFlowRepository = {
-  /** Records one detected mint/burn amount. No-ops on non-positive amounts — there's nothing to accumulate. */
-  async record(symbol: string, kind: FlowKind, amount: number): Promise<void> {
+  /**
+   * Records one detected mint/burn amount. No-ops on non-positive amounts — there's nothing to accumulate.
+   * With an `eventKey`, a leg that was already recorded is skipped (unique index), so re-reading the
+   * same transaction can never inflate the daily totals.
+   */
+  async record(symbol: string, kind: FlowKind, amount: number, eventKey?: string): Promise<void> {
     if (!(amount > 0)) return;
-    await prisma.mintFlowEvent.create({ data: { symbol, kind, amount } });
+    await prisma.mintFlowEvent.createMany({ data: [{ symbol, kind, amount, eventKey: eventKey ?? null }], skipDuplicates: true });
   },
 
   /** Read-only aggregation — for previewing what the next real summary would say, without disturbing the rolling window. */
