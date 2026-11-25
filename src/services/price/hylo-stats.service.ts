@@ -9,6 +9,7 @@
  * 182 ≈ epochs/year (Hylo-confirmed annualization basis).
  */
 import { createLogger } from '@/lib/logger.js';
+import { hyloFetch } from '@/services/hylo-api/hylo-http.js';
 import type { PriceResult } from '@/services/price/jupiter-price.service.js';
 
 const logger = createLogger('hylo-stats');
@@ -48,10 +49,8 @@ export async function queryStabilityPoolAPY(): Promise<PriceResult<StabilityPool
     return { success: true, data: cached.data };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(STATS_URL, { signal: controller.signal });
+    const res = await hyloFetch(STATS_URL, { timeoutMs: TIMEOUT_MS });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
     const json = (await res.json()) as HyloStatsResponse;
@@ -79,7 +78,5 @@ export async function queryStabilityPoolAPY(): Promise<PriceResult<StabilityPool
     }
     logger.warn({ err }, 'queryStabilityPoolAPY failed');
     return { success: false, error: String(err instanceof Error ? err.message : err) };
-  } finally {
-    clearTimeout(timer);
   }
 }

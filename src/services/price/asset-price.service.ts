@@ -136,7 +136,7 @@ const FRESH_REUSE_MAX_AGE_MS = 55_000;
  * same hyloSOL/hyUSD/xSOL collateral data. Returns null if any of those
  * assets aren't fully configured yet.
  */
-function buildXSOLPriceParams(assets: Map<string, Asset>): XSOLPriceParams | null {
+export function buildXSOLPriceParams(assets: Map<string, Asset>): XSOLPriceParams | null {
   const hyloSOL = assets.get('HYLOSOL');
   const hyUSD = assets.get('HYUSD');
   const xSOL = assets.get('XSOL');

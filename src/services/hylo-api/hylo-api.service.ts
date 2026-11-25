@@ -20,6 +20,7 @@
  */
 import { config } from '@/config/index.js';
 import { createLogger } from '@/lib/logger.js';
+import { hyloFetch, HyloBlockedError } from './hylo-http.js';
 
 const logger = createLogger('hylo-api');
 
@@ -147,10 +148,7 @@ async function request<T>(path: string): Promise<ApiResult<T>> {
       await new Promise((r) => setTimeout(r, RETRY_BASE_MS * 2 ** (attempt - 1)));
     }
     try {
-      const res = await fetch(url, {
-        headers: { Accept: 'application/json', 'User-Agent': 'hylo-asset-live-bot/1.0' },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
+      const res = await hyloFetch(url, { timeoutMs: TIMEOUT_MS });
 
       if (res.status === 429 || res.status >= 500) {
         lastStatus = res.status;
@@ -171,6 +169,9 @@ async function request<T>(path: string): Promise<ApiResult<T>> {
         continue;
       }
     } catch (err) {
+      // A blocked path is in cool-down: retrying inside it only burns time, so fail fast and let the
+      // caller's fall-back (RPC scanning / on-chain formulas) take over.
+      if (err instanceof HyloBlockedError) return { ok: false, error: err.message, status: err.status };
       lastStatus = 0;
       lastError = String(err instanceof Error ? err.message : err);
     }
