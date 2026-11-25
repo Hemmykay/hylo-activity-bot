@@ -1,6 +1,6 @@
 /**
  * Hylo market-state API — a single HTTP snapshot of every collateral pool
- * (SOL / cbBTC / HYPE / ZEC). xASSET NAV is the same identity we compute on-chain:
+ * (SOL / cbBTC / HYPE / ZEC / ONyc). xASSET NAV is the same identity we compute on-chain:
  *
  *   price    = (TVL − virtual stablecoin) / levercoin supply
  *   leverage = TVL / (price × supply)
@@ -19,7 +19,7 @@ const FRESH_REUSE_MAX_AGE_MS = 55_000;
 /** If Hylo's payload itself is older than this, treat it as a miss and RPC. */
 const MAX_PAYLOAD_AGE_SEC = 120;
 
-export type LevercoinSymbol = 'XSOL' | 'XBTC' | 'XHYPE' | 'XZEC';
+export type LevercoinSymbol = 'XSOL' | 'XBTC' | 'XHYPE' | 'XZEC' | 'XONYC';
 
 export interface MarketStateLevercoin {
   price: number;
@@ -51,6 +51,7 @@ interface MarketStateJson {
     cbbtc?: PoolContextJson;
     hype?: PoolContextJson;
     zec?: PoolContextJson;
+    onyc?: PoolContextJson;
   };
 }
 
@@ -59,6 +60,7 @@ const POOL_BY_SYMBOL: Record<LevercoinSymbol, keyof NonNullable<MarketStateJson[
   XBTC: 'cbbtc',
   XHYPE: 'hype',
   XZEC: 'zec',
+  XONYC: 'onyc',
 };
 
 /**
