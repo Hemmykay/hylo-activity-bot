@@ -45,6 +45,7 @@ const EXO_SYMBOL_BY_COLLATERAL: Record<string, string> = {
   cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij: 'XBTC', // cbBTC
   '98sMhvDwXj1RQi5c5Mndm3vPe9cBqPrbLaufMXFNMh5g': 'XHYPE', // HYPE
   A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS: 'XZEC', // ZEC
+  '5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5': 'XONYC', // ONyc
 };
 
 function num(value: unknown): number | null {

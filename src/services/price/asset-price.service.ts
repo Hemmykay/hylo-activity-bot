@@ -283,6 +283,10 @@ async function resolveLivePriceUsd(symbol: string, assets: Map<string, Asset>): 
     });
   }
 
+  // xONYC has no on-chain fallback (no DB asset row or price module yet): market-state only.
+  // Null just means "price unavailable", which the callers already handle.
+  if (symbol === 'XONYC') return resolveLevercoinLive('XONYC', async () => null);
+
   return null;
 }
 
