@@ -14,6 +14,7 @@ export type CreateAssetInput = {
 export type AssetMetaInput = {
   stakeVault?: string | null;
   collateralWallet?: string | null;
+  emoji?: string | null;
 };
 
 export const assetRepository = {
@@ -54,6 +55,7 @@ export const assetRepository = {
       data: {
         ...(data.stakeVault !== undefined && { stakeVault: data.stakeVault }),
         ...(data.collateralWallet !== undefined && { collateralWallet: data.collateralWallet }),
+        ...(data.emoji !== undefined && { emoji: data.emoji }),
       },
     });
   },

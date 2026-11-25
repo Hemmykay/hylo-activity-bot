@@ -37,6 +37,16 @@ import {
 import { mapFeedEventsToActions, type FeedAction } from './feed-events.js';
 import { getSendableChannel, type SendableChannel } from '@/lib/discord-utils.js';
 import { checkEHYUSDCapMilestone } from './ehyusd-cap-watcher.service.js';
+import {
+  claimAlert,
+  loadProgress,
+  pruneAlertClaims,
+  releaseAlert,
+  saveFeedHwm,
+  saveLedgerFloor,
+  saveRpcCheckpoint,
+  saveRpcHeartbeat,
+} from './watcher-progress.js';
 import { twitterService } from '@/services/twitter/twitter.service.js';
 import { createLogger } from '@/lib/logger.js';
 
@@ -48,14 +58,24 @@ const POLL_INTERVAL_MS = 60_000;
 // of the process instead of re-querying every tick.
 const decimalsCache = new Map<string, number>();
 
-// In-memory only, by design: this is informational monitoring, not an
-// accounting ledger. Starting empty on every process boot means a restart
-// always seeds fresh from "now" rather than trying to catch up on whatever
-// happened during downtime — there's nothing to read back, so there's
-// nothing to backfill.
+// RPC scan checkpoints (newest signature seen per asset). Held in memory for speed and mirrored to the
+// database (watcher-progress.ts) so a redeploy while the RPC fall-back is active resumes where it
+// stopped instead of re-seeding from "now" and dropping the gap. Burns are polled independently of
+// mints, hence the separate map.
 const checkpoints = new Map<string, string>();
-// Same idea, tracked separately since burns are polled independently of mints.
 const burnCheckpoints = new Map<string, string>();
+
+function setCheckpoint(symbol: string, signature: string): void {
+  if (checkpoints.get(symbol) === signature) return;
+  checkpoints.set(symbol, signature);
+  void saveRpcCheckpoint('mint', symbol, signature);
+}
+
+function setBurnCheckpoint(symbol: string, signature: string): void {
+  if (burnCheckpoints.get(symbol) === signature) return;
+  burnCheckpoints.set(symbol, signature);
+  void saveRpcCheckpoint('burn', symbol, signature);
+}
 
 /**
  * Best-effort ledger write for the daily summary — a DB hiccup here must never take down the tick.
@@ -67,11 +87,13 @@ const burnCheckpoints = new Map<string, string>();
  * so two distinct legs of the same kind inside one transaction still both count; it is rounded
  * because the feed gives decimal strings while the RPC path divides raw integers.
  */
-async function recordFlow(symbol: string, kind: 'MINT' | 'BURN', amount: number, signature: string): Promise<void> {
+async function recordFlow(symbol: string, kind: 'MINT' | 'BURN', amount: number, signature: string): Promise<boolean> {
   try {
     await mintFlowRepository.record(symbol, kind, amount, `${signature}:${symbol}:${kind}:${amount.toFixed(4)}`);
+    return true;
   } catch (err) {
     logger.warn({ err, symbol, kind, amount }, 'Failed to record flow event — daily summary will undercount this one');
+    return false;
   }
 }
 
@@ -141,7 +163,18 @@ function emojiPrefix(symbol: string, assetMap: Map<string, Asset>): string {
 async function postMintAlert(client: Client, symbol: string, event: { signature: string }, amount: number, price: number | null, assetMap: Map<string, Asset>): Promise<void> {
   const channel = await getMintAlertsChannel(client);
   if (!channel) return;
-  await channel.send(`${emojiPrefix(symbol, assetMap)}${fmtQty(amount)} ${symbol}${fmtUsdTotal(amount, price)} Minted [→](https://solscan.io/tx/${event.signature})`);
+  // One announcement per on-chain event, whichever source (API feed, RPC fall-back, restart backfill) saw it first.
+  const claimKey = `mint:${event.signature}:${symbol}:${amount.toFixed(4)}`;
+  if (!(await claimAlert(claimKey))) {
+    logger.debug({ symbol, signature: event.signature }, 'Mint alert already posted — skipping duplicate');
+    return;
+  }
+  try {
+    await channel.send(`${emojiPrefix(symbol, assetMap)}${fmtQty(amount)} ${symbol}${fmtUsdTotal(amount, price)} Minted [→](https://solscan.io/tx/${event.signature})`);
+  } catch (err) {
+    await releaseAlert(claimKey); // not delivered — let a later pass announce it
+    throw err;
+  }
 }
 
 /**
@@ -153,7 +186,17 @@ async function postStakeAlert(client: Client, event: { eHYUSDNetAmount: number; 
   const channel = await getMintAlertsChannel(client);
   if (!channel) return;
   const amountStr = event.eHYUSDNetAmount.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  await channel.send(`${emojiPrefix('EHYUSD', assetMap)}${amountStr} eHYUSD${fmtUsdTotal(event.eHYUSDNetAmount, price)} Staked [→](https://solscan.io/tx/${event.signature})`);
+  const claimKey = `stake:${event.signature}:${event.eHYUSDNetAmount.toFixed(2)}`;
+  if (!(await claimAlert(claimKey))) {
+    logger.debug({ signature: event.signature }, 'Stake alert already posted — skipping duplicate');
+    return;
+  }
+  try {
+    await channel.send(`${emojiPrefix('EHYUSD', assetMap)}${amountStr} eHYUSD${fmtUsdTotal(event.eHYUSDNetAmount, price)} Staked [→](https://solscan.io/tx/${event.signature})`);
+  } catch (err) {
+    await releaseAlert(claimKey);
+    throw err;
+  }
 }
 
 /**
@@ -266,10 +309,10 @@ async function tickGenericMintAsset(client: Client, asset: Asset, assetMap: Map<
   }
 
   if (mintResult.success && mintResult.data.newestSignature) {
-    checkpoints.set(asset.symbol, mintResult.data.newestSignature);
+    setCheckpoint(asset.symbol, mintResult.data.newestSignature);
   }
   if (burnResult.success && burnResult.data.newestSignature) {
-    burnCheckpoints.set(asset.symbol, burnResult.data.newestSignature);
+    setBurnCheckpoint(asset.symbol, burnResult.data.newestSignature);
   }
 }
 
@@ -357,10 +400,10 @@ async function tickHyUSDAsset(client: Client, hyUSDAsset: Asset, assetMap: Map<s
   }
 
   if (newestSignature) {
-    checkpoints.set('HYUSD', newestSignature);
+    setCheckpoint('HYUSD', newestSignature);
   }
   if (burnResult.success && burnResult.data.newestSignature) {
-    burnCheckpoints.set('HYUSD', burnResult.data.newestSignature);
+    setBurnCheckpoint('HYUSD', burnResult.data.newestSignature);
   }
 }
 
@@ -447,10 +490,10 @@ async function tickXSOLAsset(client: Client, xSOLAsset: Asset, assetMap: Map<str
   }
 
   if (newestSignature) {
-    checkpoints.set('XSOL', newestSignature);
+    setCheckpoint('XSOL', newestSignature);
   }
   if (burnResult.success && burnResult.data.newestSignature) {
-    burnCheckpoints.set('XSOL', burnResult.data.newestSignature);
+    setBurnCheckpoint('XSOL', burnResult.data.newestSignature);
   }
 }
 
@@ -503,7 +546,7 @@ async function tickStakeAsset(client: Client, eHYUSDAsset: Asset, assetMap: Map<
   }
 
   if (newestSignature) {
-    checkpoints.set('EHYUSD', newestSignature);
+    setCheckpoint('EHYUSD', newestSignature);
   }
 }
 
@@ -531,16 +574,37 @@ async function tickStakeAsset(client: Client, eHYUSDAsset: Asset, assetMap: Map<
 //    tickXSOLAsset applied before.
 
 const FEED_PAGE_LIMIT = 100;
-const FEED_MAX_CHASE_PAGES = 2;
+/**
+ * How far one read may page back looking for the high-water mark. 40 pages × 100 events is roughly
+ * 15+ hours of current activity — enough to close a long outage or redeploy gap; beyond that the gap
+ * is logged loudly rather than silently skipped.
+ */
+const FEED_BACKFILL_MAX_PAGES = 40;
+const FEED_CHASE_DELAY_MS = 250; // the API rate-limits bursts — pace the paging
 const FEED_STALE_PROBE_MS = 10 * 60_000;
 const FEED_MAX_CHAIN_LAG_MS = 10 * 60_000;
 const FEED_SEEN_CAP = 5_000;
+/**
+ * Events up to this many slots (~10 min) below the high-water mark are still treated as candidates:
+ * the indexer can surface an event after newer ones, and after a restart the in-memory "seen" set is
+ * empty, so the last few minutes are simply re-read — harmless, because the ledger is idempotent and
+ * alerts are claimed once. Anything older than the window is history that was deliberately not
+ * replayed (e.g. what already existed when the bot was first installed).
+ */
+const FEED_SLOT_SLACK = 1_500;
+/** Backfilled events older than this are recorded in the ledger but not announced — stale news. */
+const ALERT_MAX_AGE_MS = 15 * 60_000;
 
 const feedSeenKeys = new Set<string>();
-let feedSeeded = false;
 let feedNewestEventMs: number | null = null;
+/** Newest feed slot fully handled (persisted). null = fresh install, nothing to catch up on. */
+let feedHwmSlot: number | null = null;
+/** Start of the current daily window (persisted): backfilled events older than this were already reported. */
+let ledgerFloorMs = 0;
 let poolWalletCheckpoint: string | null = null;
 let usingRpcFallback = false;
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function feedEventKey(e: ActivityEvent): string {
   return `${e.signature}:${e.eventIndex}`;
@@ -557,7 +621,20 @@ function pruneFeedSeen(): void {
   }
 }
 
-/** Returns false when the feed fetch failed (caller decides on RPC fallback). */
+/**
+ * Reads the Hylo API feed and handles everything newer than the persisted high-water mark.
+ * Returns false when the first fetch failed (caller decides on RPC fallback).
+ *
+ * This single path serves every situation that used to lose data:
+ *  - normal polling: page 1 already overlaps handled history, so it is one request;
+ *  - after a redeploy: the persisted mark makes it page back over the downtime;
+ *  - after the RPC fall-back: same — the mark stayed where the feed last succeeded, so recovery
+ *    replays the whole outage. Events the RPC path already handled are no-ops (the ledger is
+ *    idempotent and alerts are claimed once per event), and events too old to be news are recorded
+ *    without being announced.
+ * The mark only advances once every event above it was handled, so a failed page or a failed ledger
+ * write is retried on the next tick instead of skipped.
+ */
 async function tickViaFeed(client: Client, assets: Asset[], assetMap: Map<string, Asset>): Promise<boolean> {
   const first = await getActivityPage({ limit: FEED_PAGE_LIMIT });
   if (!first.ok) {
@@ -567,58 +644,92 @@ async function tickViaFeed(client: Client, assets: Asset[], assetMap: Map<string
   markFeedSuccess();
 
   const all: ActivityEvent[] = [...(first.data.events ?? [])];
+  const newestSlot = all.reduce((m, e) => Math.max(m, e.slot), 0);
 
-  if (!feedSeeded) {
-    // First run: checkpoint at "now" WITHOUT replaying history — the same
-    // no-backfill semantics the RPC scanners have always had on boot.
+  if (feedHwmSlot === null) {
+    // Fresh install (nothing persisted): start from "now" without replaying history.
     for (const e of all) feedSeenKeys.add(feedEventKey(e));
-    feedSeeded = true;
     feedNewestEventMs = all[0] ? Date.parse(all[0].blockTime) : null;
-    logger.info({ seeded: all.length }, 'Hylo API feed checkpoint seeded — alerting from now');
+    if (newestSlot > 0) {
+      feedHwmSlot = newestSlot;
+      await saveFeedHwm(newestSlot);
+    }
+    logger.info({ seeded: all.length, hwmSlot: feedHwmSlot }, 'Hylo API feed checkpoint seeded — alerting from now');
     return true;
   }
 
-  // A full page whose oldest event is still unseen means more happened between
-  // ticks than one page holds — chase a couple of cursor pages before giving
-  // up (the RPC path's equivalent is its one-page gap resync).
-  let lastPageCount = all.length;
-  let chaseCursor = first.data.cursor ?? null;
-  let chased = 0;
-  while (lastPageCount === FEED_PAGE_LIMIT && chaseCursor && chased < FEED_MAX_CHASE_PAGES) {
+  const hwm = feedHwmSlot;
+  const reachedMark = (): boolean => {
     const oldest = all[all.length - 1];
-    if (oldest && feedSeenKeys.has(feedEventKey(oldest))) break; // overlapped already-seen history
-    const next = await getActivityPage({ limit: FEED_PAGE_LIMIT, before: chaseCursor });
-    if (!next.ok) break;
+    return !oldest || oldest.slot <= hwm;
+  };
+  let cursor = first.data.cursor ?? null;
+  let lastCount = all.length;
+  let pages = 1;
+  let pagingFailed = false;
+  while (!reachedMark() && lastCount > 0 && cursor && pages < FEED_BACKFILL_MAX_PAGES) {
+    await sleep(FEED_CHASE_DELAY_MS);
+    const next = await getActivityPage({ limit: FEED_PAGE_LIMIT, before: cursor });
+    if (!next.ok) {
+      pagingFailed = true;
+      break;
+    }
     all.push(...(next.data.events ?? []));
-    lastPageCount = next.data.events?.length ?? 0;
-    chaseCursor = next.data.cursor ?? null;
-    chased++;
+    lastCount = next.data.events?.length ?? 0;
+    cursor = next.data.cursor ?? null;
+    pages++;
+  }
+  if (!pagingFailed && !reachedMark() && lastCount > 0 && cursor) {
+    logger.warn({ pages, hwmSlot: hwm }, 'Feed gap deeper than the backfill window — events older than the oldest page fetched could not be recovered');
   }
 
-  const fresh = all.filter((e) => !feedSeenKeys.has(feedEventKey(e)));
+  const fresh = all.filter((e) => !feedSeenKeys.has(feedEventKey(e)) && e.slot >= hwm - FEED_SLOT_SLACK);
   for (const e of all) feedSeenKeys.add(feedEventKey(e));
   pruneFeedSeen();
   if (all[0]) feedNewestEventMs = Math.max(feedNewestEventMs ?? 0, Date.parse(all[0].blockTime));
 
-  if (lastPageCount === FEED_PAGE_LIMIT && chased >= FEED_MAX_CHASE_PAGES && fresh.length > 0) {
-    logger.warn({ fresh: fresh.length }, 'Feed burst deeper than chase depth — older events skipped (same resync semantics as the RPC path)');
+  // Events from before the last daily wipe belong to a summary that was already posted.
+  const eligible = fresh.filter((e) => !(Date.parse(e.blockTime) < ledgerFloorMs));
+
+  let handledOk = true;
+  if (eligible.length > 0) {
+    const ordered = [...eligible].sort((a, b) => (a.slot - b.slot) || (a.eventIndex - b.eventIndex));
+    const actions = mapFeedEventsToActions(ordered);
+    const timeBySignature = new Map(ordered.map((e) => [e.signature, Date.parse(e.blockTime)]));
+    const now = Date.now();
+    const isNews = (signature: string): boolean => {
+      const at = timeBySignature.get(signature);
+      return at === undefined || Number.isNaN(at) || now - at <= ALERT_MAX_AGE_MS;
+    };
+    if (pages > 1) logger.info({ pages, events: eligible.length, hwmSlot: hwm }, 'Feed backfill — catching up from the persisted high-water mark');
+    handledOk = await reportFeedActions(client, actions, assetMap, isNews);
   }
 
-  if (fresh.length === 0) return true;
-
-  const ordered = [...fresh].sort((a, b) => (a.slot - b.slot) || (a.eventIndex - b.eventIndex));
-  const actions = mapFeedEventsToActions(ordered);
-  await reportFeedActions(client, actions, assetMap);
+  if (!handledOk) {
+    // Something failed to record: forget these keys and keep the mark where it is, so the next tick retries.
+    for (const e of fresh) feedSeenKeys.delete(feedEventKey(e));
+    return true;
+  }
+  if (!pagingFailed && newestSlot > hwm) {
+    feedHwmSlot = newestSlot;
+    await saveFeedHwm(newestSlot);
+  }
   return true;
 }
 
-/** Applies mapped feed actions: mints → threshold-gated alert + ledger, burns → ledger only, stakes → alert. */
-async function reportFeedActions(client: Client, actions: FeedAction[], assetMap: Map<string, Asset>): Promise<void> {
+/**
+ * Applies mapped feed actions: mints → threshold-gated alert + ledger, burns → ledger only, stakes → alert.
+ * `isNews` says whether an event is recent enough to announce (backfilled history is recorded silently).
+ * Returns false if any ledger write or action failed, so the caller does not advance its high-water mark.
+ */
+async function reportFeedActions(client: Client, actions: FeedAction[], assetMap: Map<string, Asset>, isNews: (signature: string) => boolean): Promise<boolean> {
+  let allOk = true;
   for (const action of actions) {
     try {
       if (action.kind === 'mint') {
         const price = await resolveAssetPriceUsd(action.symbol, assetMap);
-        await recordFlow(action.symbol, 'MINT', action.amount, action.signature);
+        if (!(await recordFlow(action.symbol, 'MINT', action.amount, action.signature))) allOk = false;
+        if (!isNews(action.signature)) continue;
         if (!meetsReportThreshold(action.amount, price)) {
           logger.debug({ symbol: action.symbol, amount: action.amount, price, signature: action.signature }, 'Feed mint below MIN_VAL_REPORT — not posted');
           continue;
@@ -627,8 +738,9 @@ async function reportFeedActions(client: Client, actions: FeedAction[], assetMap
         logger.info({ symbol: action.symbol, amount: action.amount, signature: action.signature }, 'Mint alert posted (Hylo API feed)');
       } else if (action.kind === 'burn') {
         // No live alert for burns — the daily summary is the only surface (unchanged).
-        await recordFlow(action.symbol, 'BURN', action.amount, action.signature);
+        if (!(await recordFlow(action.symbol, 'BURN', action.amount, action.signature))) allOk = false;
       } else {
+        if (!isNews(action.signature)) continue;
         const price = await resolveAssetPriceUsd('EHYUSD', assetMap);
         if (!meetsReportThreshold(action.amount, price)) {
           logger.debug({ amount: action.amount, price, signature: action.signature }, 'Feed stake below MIN_VAL_REPORT — not posted');
@@ -638,9 +750,11 @@ async function reportFeedActions(client: Client, actions: FeedAction[], assetMap
         logger.info({ amount: action.amount, signature: action.signature }, 'Stake alert posted (Hylo API feed)');
       }
     } catch (err) {
-      logger.error({ err, action }, 'Failed to process feed action — continuing with the rest');
+      allOk = false;
+      logger.error({ err, action }, 'Failed to process feed action — continuing with the rest, will retry next tick');
     }
   }
+  return allOk;
 }
 
 /**
@@ -748,26 +862,9 @@ async function feedLaggingRealActivity(hyUSDMint: string | null): Promise<boolea
   return false;
 }
 
-/** Recovery probe while in RPC fallback: seed the feed checkpoint and report success without processing anything. */
-async function trySeedFeed(): Promise<boolean> {
-  // Seed a full page, like the first-boot seed does. Seeding only the newest event made the next
-  // tick treat the rest of the page (and up to two chased pages) as brand new, re-recording and
-  // re-alerting activity the RPC fallback had already reported.
-  const page = await getActivityPage({ limit: FEED_PAGE_LIMIT });
-  if (!page.ok) {
-    markFeedFailure(page.error);
-    return false;
-  }
-  markFeedSuccess();
-  for (const e of page.data.events ?? []) feedSeenKeys.add(feedEventKey(e));
-  const newest = (page.data.events ?? [])[0];
-  if (newest) feedNewestEventMs = Date.parse(newest.blockTime);
-  feedSeeded = true;
-  return true;
-}
-
 /** Legacy path: the per-asset RPC scanners, unchanged — used while the feed is unavailable. */
 async function tickViaRpc(client: Client, assets: Asset[], assetMap: Map<string, Asset>): Promise<void> {
+  void saveRpcHeartbeat(); // tells a restart that these checkpoints are live, not left over from feed mode
   for (const asset of assets) {
     if (!asset.tokenAddress) continue;
 
@@ -815,7 +912,9 @@ async function tick(client: Client): Promise<void> {
       } else {
         await tickViaRpc(client, assets, assetMap);
         if (!config.hyloApi.eventsDisabled) {
-          const recovered = await trySeedFeed();
+          // Recovery probe IS the real feed read: it replays everything since the high-water mark
+          // (the whole outage), de-duplicated against what the RPC scan already handled.
+          const recovered = await tickViaFeed(client, assets, assetMap);
           if (recovered) {
             usingRpcFallback = false;
             logger.info('Hylo API feed recovered — resuming the API-primary event path');
@@ -884,6 +983,12 @@ export async function postDailySummary(client: Client, opts?: { dryRun?: boolean
     const { windowStart, totals } = opts?.dryRun
       ? await mintFlowRepository.summarize()
       : await mintFlowRepository.summarizeAndClear();
+    if (!opts?.dryRun) {
+      // New window starts now: history older than this was just reported and must not re-enter via a backfill.
+      ledgerFloorMs = Date.now();
+      await saveLedgerFloor(ledgerFloorMs);
+      void pruneAlertClaims();
+    }
     const assets = await assetRepository.findAll({ activeOnly: true });
     const assetMap = new Map(assets.map((a) => [a.symbol, a]));
 
@@ -1021,6 +1126,36 @@ export function startMintWatcher(client: Client): void {
     { intervalMs: POLL_INTERVAL_MS, mintAlertsChannelId: config.mintAlerts.channelId, ehyusdCapChannelId: config.ehyusdCap.channelId },
     'Mint watcher started',
   );
-  void loop(client);
+  // Load durable progress first so the very first tick already knows where the last run stopped.
+  void restoreProgress().then(() => { void loop(client); });
   if (config.mintAlerts.channelId) startDailySummaryScheduler(client);
+}
+
+/** Pulls the persisted high-water mark, ledger floor and (fresh) RPC checkpoints into memory. */
+async function restoreProgress(): Promise<void> {
+  const p = await loadProgress();
+  feedHwmSlot = p.feedHwmSlot;
+  ledgerFloorMs = p.ledgerFloorMs;
+  for (const [symbol, sig] of p.rpcMint) checkpoints.set(symbol, sig);
+  for (const [symbol, sig] of p.rpcBurn) burnCheckpoints.set(symbol, sig);
+}
+
+// ─── Test hooks (same convention as pool-watch's processPoll / resetPoolWatchForTests) ───────────
+
+/** Test hook: one full watcher tick. */
+export async function runTickForTests(client: Client): Promise<void> {
+  await tick(client);
+}
+
+/** Test hook: simulates a process restart — drops all in-memory state, then reloads what was persisted. */
+export async function simulateRestartForTests(): Promise<void> {
+  checkpoints.clear();
+  burnCheckpoints.clear();
+  feedSeenKeys.clear();
+  feedNewestEventMs = null;
+  feedHwmSlot = null;
+  ledgerFloorMs = 0;
+  poolWalletCheckpoint = null;
+  usingRpcFallback = false;
+  await restoreProgress();
 }

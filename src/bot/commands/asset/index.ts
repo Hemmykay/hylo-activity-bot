@@ -219,6 +219,18 @@ async function handleConfigure(interaction: ChatInputCommandInteraction): Promis
         return f;
       })(),
     ),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(
+      (() => {
+        const f = new TextInputBuilder()
+          .setCustomId('asset-emoji')
+          .setLabel('Emoji shown in alerts')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder('<:xONYC:1234567890> — copy it from Discord by typing \\:name: in a message')
+          .setRequired(false);
+        if (asset.emoji) f.setValue(asset.emoji);
+        return f;
+      })(),
+    ),
   );
   await interaction.showModal(modal);
 }

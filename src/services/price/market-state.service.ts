@@ -10,6 +10,7 @@
  * down or stale API cannot take pricing offline.
  */
 import { createLogger } from '@/lib/logger.js';
+import { hyloFetch } from '@/services/hylo-api/hylo-http.js';
 
 const logger = createLogger('market-state');
 
@@ -157,18 +158,14 @@ function parseSnapshot(json: MarketStateJson, fetchedAt: number): Snapshot | nul
 }
 
 async function fetchSnapshot(): Promise<Snapshot | null> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(MARKET_STATE_URL, { signal: controller.signal });
+    const res = await hyloFetch(MARKET_STATE_URL, { timeoutMs: TIMEOUT_MS });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     const json = (await res.json()) as MarketStateJson;
     return parseSnapshot(json, Date.now());
   } catch (err) {
     logger.warn({ err }, 'market-state fetch failed — caller will use on-chain fallback');
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

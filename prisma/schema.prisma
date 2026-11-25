@@ -203,6 +203,28 @@ model MintFlowEvent {
   @@map("mint_flow_events")
 }
 
+// Small key/value store for the watchers' durable progress markers (feed high-water mark, RPC scan
+// checkpoints, ledger floor). In-memory-only checkpoints meant every redeploy and every switch between
+// the Hylo API feed and the RPC fallback silently dropped whatever happened in the gap.
+model WatcherState {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("watcher_state")
+}
+
+// One row per alert already posted. Mint/stake alerts claim their key here before posting, so the same
+// on-chain event reported by the API feed, the RPC fallback, a restart backfill or a recovery re-scan
+// is announced at most once. Pruned after a few days.
+model AlertedEvent {
+  key       String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("alerted_events")
+}
+
 enum FlowKind {
   MINT
   BURN

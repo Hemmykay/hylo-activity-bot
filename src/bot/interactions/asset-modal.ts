@@ -124,7 +124,18 @@ export async function handleAssetConfigureModal(interaction: ModalSubmitInteract
     const stakeVault       = stakeVaultRaw ? stakeVaultRaw.split(',').map((s) => s.trim()).filter(Boolean).join(', ') : null;
     const collateralWallet = collateralWalletRaw || null;
 
-    const asset = await assetRepository.updateMeta(symbol, { stakeVault, collateralWallet });
+    // Emoji: a Discord custom emoji (<:name:id> / <a:name:id>) or a plain unicode emoji. Blank clears it.
+    const emojiRaw = interaction.fields.getTextInputValue('asset-emoji').trim();
+    if (emojiRaw && /[<>:]/.test(emojiRaw) && !/^<a?:\w{2,32}:\d{15,25}>$/.test(emojiRaw)) {
+      await interaction.reply({
+        content: 'That emoji does not look right. Use the form `<:name:1234567890>` (type `\\:name:` in a Discord message to copy it), or leave the field blank.',
+        ephemeral: true,
+      });
+      return;
+    }
+    const emoji = emojiRaw || null;
+
+    const asset = await assetRepository.updateMeta(symbol, { stakeVault, collateralWallet, emoji });
     if (!asset) {
       await interaction.reply({ content: `Asset **${symbol}** not found.`, ephemeral: true });
       return;
@@ -135,6 +146,7 @@ export async function handleAssetConfigureModal(interaction: ModalSubmitInteract
     else lines.push('\nStake Vault(s): _(cleared)_');
     if (asset.collateralWallet) lines.push(`\nCollateral Wallet: \`${asset.collateralWallet}\``);
     else lines.push('\nCollateral Wallet: _(cleared)_');
+    lines.push(asset.emoji ? `\nEmoji: ${asset.emoji}` : '\nEmoji: _(none)_');
 
     await interaction.reply({ content: lines.join(''), ephemeral: true });
     logger.info({ symbol: asset.symbol, stakeVault, collateralWallet }, 'Asset meta configured');

@@ -21,6 +21,8 @@ import { config } from '@/config/index.js';
 import { createLogger } from '@/lib/logger.js';
 import { notifyDev } from '@/services/dev-alert/dev-alert.service.js';
 import { queryAllPoolHealth, type LevercoinSymbol, type PoolHealth } from '@/services/price/market-state.service.js';
+import { assetRepository } from '@/db/repositories/asset.repository.js';
+import { queryPoolHealthOnchain } from './pool-health-onchain.js';
 import {
   WATCH_RULES,
   detectPoolFindings,
@@ -120,15 +122,40 @@ export function processPoll(
   return out;
 }
 
+/**
+ * Hylo's market-state API first (one cheap call, carries Hylo's own zone label); if it is blocked,
+ * stale or down, read the pools from the chain instead so the watcher is never blind just because
+ * an HTTP endpoint is. Only when BOTH fail does the poll count as missed.
+ */
+async function readPools(): Promise<{ pools: Partial<Record<LevercoinSymbol, PoolHealth>>; source: 'api' | 'onchain' } | null> {
+  const fromApi = await queryAllPoolHealth();
+  if (fromApi) return { pools: fromApi, source: 'api' };
+  try {
+    const assets = await assetRepository.findAll({ activeOnly: true });
+    const fromChain = await queryPoolHealthOnchain(new Map(assets.map((a) => [a.symbol, a])));
+    if (fromChain) return { pools: fromChain, source: 'onchain' };
+  } catch (err) {
+    logger.warn({ err }, 'On-chain pool health fallback failed');
+  }
+  return null;
+}
+
+let lastSource: 'api' | 'onchain' | null = null;
+
 async function poll(): Promise<void> {
-  const pools = await queryAllPoolHealth();
+  const read = await readPools();
+  const pools = read?.pools ?? null;
+  if (read && read.source !== lastSource) {
+    logger.info({ source: read.source, pools: Object.keys(read.pools) }, read.source === 'api' ? 'Pool watch reading Hylo market-state' : 'Pool watch reading pools on-chain (market-state unavailable)');
+    lastSource = read.source;
+  }
   if (!pools) {
     missedPolls++;
     if (missedPolls === BLIND_AFTER_POLLS) {
-      logger.warn({ missedPolls }, 'Hylo market-state unavailable — pool watch is blind');
+      logger.warn({ missedPolls }, 'Hylo market-state and the on-chain fallback both unavailable — pool watch is blind');
       await notifyDev(
         'Pool watch is blind',
-        `Hylo's market-state API has been unreachable or stale for ${BLIND_AFTER_POLLS} minutes, so pool changes cannot be detected until it recovers.`,
+        `Neither Hylo's market-state API nor the on-chain fallback could read the pools for ${BLIND_AFTER_POLLS} minutes, so pool changes cannot be detected until one recovers.`,
         'pool-watch-blind',
         { cooldownMs: BLIND_COOLDOWN_MS },
       );

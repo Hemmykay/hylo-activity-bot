@@ -103,7 +103,8 @@ You want to see, in order:
 - `All migrations have been successfully applied.` (boot migrations)
 - `Starting Hylo Support Copilot` → `Database connection established`
 - `Ticker bot online` ×6 (XSOL, XBTC, XHYPE, XZEC, XONYC, eHYUSD)
-- `Mint watcher started` then `Hylo API feed checkpoint seeded — alerting from now`
+- `Mint watcher started` then `Watcher progress loaded` (and, on the very first boot only,
+  `Hylo API feed checkpoint seeded — alerting from now`)
 - Within ~5 minutes: ticker nicknames updating in Discord, and (if anything
   happens on-chain) alerts posting via the feed path.
 
@@ -119,11 +120,29 @@ it's worth knowing either way.
 ## Ongoing
 
 - **Deploys:** push to main → Dokploy rebuilds → migrations apply on boot.
-  Downtime is one container restart; checkpoints re-seed without backfill
-  (same as any restart has always been).
+  Downtime is one container restart. Progress is persisted (`watcher_state`
+  table), so the next boot replays whatever the feed recorded while the
+  container was down — nothing is skipped, and nothing is announced twice
+  (`alerted_events` claims each alert once). Events older than 15 minutes
+  are recorded in the daily totals but not announced.
 - **Rollback / kill switch:** Dokploy → redeploy previous image, or set
   `HYLO_V1_EVENTS_DISABLED=1` in env to force pure-RPC event scanning.
 - **Do not** scale the bot service beyond 1 replica.
 - Timezone doesn't matter: the daily summary schedules itself in UTC.
 - Optionally back up the `db-data` volume (Dokploy's backup settings) — it
   holds the FAQ/venue content the support answers depend on.
+
+## When api.hylo.so refuses us (403 / 429)
+
+Nothing is lost; the bot degrades and then catches up:
+- Every call goes through one client (`hylo-http.ts`). On a 403 it logs the
+  edge's response once (`api.hylo.so refused this request` — status, `server`,
+  `x-vercel-id`, `x-vercel-mitigated`, body snippet): that is what to send
+  Hylo to get the server's IP allow-listed. It then backs off per path
+  (2 → 5 → 15 → 30 min) instead of retrying every minute.
+- Mint/burn: after 3 failed polls the watcher scans via Helius RPC. When the
+  feed answers again it replays everything since its last good read
+  (de-duplicated), so the daily totals end up complete.
+- Pool watch: reads the pools on-chain when market-state is unavailable
+  (`Pool watch reading pools on-chain`); it only goes "blind" if RPC fails too.
+- Prices: market-state first, on-chain formulas second (as before).
