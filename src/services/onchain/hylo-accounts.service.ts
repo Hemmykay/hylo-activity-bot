@@ -42,6 +42,10 @@ const EXO_PAIR_ACCOUNTS: Record<string, string> = {
   // the PDA from seeds ("exo_pair" + ZEC mint) equals the ExoPair account whose collateral_mint is
   // ZEC, and the xZEC mint PDA's supply matches Hylo's API levercoin_supply exactly.
   A7bdiYdS5GjqGFtxf17ppRHtDKPkkRqbKtR27dxvQXaS: 'Atssq1iqXhUrPX1qV9e2UyQCWdeAd6DXQrccK9eu3Bc',
+  // ONyc's exo_pair — live since 2026-11. Derived from the same seeds ("exo_pair" + ONyc mint); the same
+  // derivation reproduces ZEC's address exactly, the account's collateral_mint field is the ONyc mint, and the
+  // xONYC mint's on-chain supply matches Hylo's API levercoin_supply.
+  '5Y8NV33Vv7WbnLfq3zBcKSdYPrk7g2KoiQoe7M2tcxp5': 'J1KqodmuXBdRZZbiHV9LDh3uYDz1QZ3hzsWYXLraHJWZ',
 };
 
 /** The SOL/LST pool's own virtual-stablecoin supply — the hyUSD backing attributed to the SOL pool specifically. */

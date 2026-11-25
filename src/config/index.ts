@@ -83,6 +83,7 @@ const envSchema = z.object({
   TICKER_BOT_TOKEN_XBTC: z.string().optional(),
   TICKER_BOT_TOKEN_XHYPE: z.string().optional(),
   TICKER_BOT_TOKEN_XZEC: z.string().optional(),
+  TICKER_BOT_TOKEN_XONYC: z.string().optional(),
   TICKER_BOT_TOKEN_EHYUSD: z.string().optional(),
 
   // ─── X (Twitter) ────────────────────────────────────────────────────────────
@@ -240,6 +241,7 @@ function loadConfig() {
         { symbol: 'XBTC', token: env.TICKER_BOT_TOKEN_XBTC },
         { symbol: 'XHYPE', token: env.TICKER_BOT_TOKEN_XHYPE },
         { symbol: 'XZEC', token: env.TICKER_BOT_TOKEN_XZEC },
+        { symbol: 'XONYC', token: env.TICKER_BOT_TOKEN_XONYC },
         { symbol: 'EHYUSD', token: env.TICKER_BOT_TOKEN_EHYUSD },
       ] as Array<{ symbol: string; token: string | undefined }>
     ).filter((t): t is { symbol: string; token: string } => Boolean(t.token)),
