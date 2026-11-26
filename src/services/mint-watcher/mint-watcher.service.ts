@@ -967,6 +967,49 @@ function fmtUsdCompact(n: number): string {
   return `${sign}$${Math.round(abs).toLocaleString('en-US')}`;
 }
 
+const RECONCILE_MAX_PAGES = 90;
+
+/**
+ * Just before the daily summary: re-read the whole window from the Hylo feed and record any
+ * mint/burn leg the ledger is missing. The ledger is idempotent (same key as the live paths), so
+ * legs that are already there are no-ops; legs that were lost to a restart, an API outage between
+ * polls, or an asset that was wired in mid-window are filled in. It only ever adds — flows the
+ * feed does not carry (stability-pool legs) are left untouched. Best-effort: if the feed is
+ * unreachable the summary goes out with the ledger as it is.
+ */
+async function reconcileLedgerFromFeed(): Promise<void> {
+  try {
+    const sinceMs = ledgerFloorMs > 0 ? ledgerFloorMs : Date.now() - DAY_MS;
+    const events: ActivityEvent[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    for (; pages < RECONCILE_MAX_PAGES; pages++) {
+      if (pages > 0) await sleep(FEED_CHASE_DELAY_MS);
+      const page = await getActivityPage(cursor ? { limit: FEED_PAGE_LIMIT, before: cursor } : { limit: FEED_PAGE_LIMIT });
+      if (!page.ok) {
+        logger.warn({ pages, error: page.error }, 'Daily reconcile: feed unavailable — summarising the ledger as it stands');
+        return;
+      }
+      const batch = page.data.events ?? [];
+      events.push(...batch);
+      const oldest = batch[batch.length - 1];
+      if (!oldest || !page.data.cursor || Date.parse(oldest.blockTime) < sinceMs) break;
+      cursor = page.data.cursor;
+    }
+    const inWindow = events.filter((e) => Date.parse(e.blockTime) >= sinceMs);
+    let added = 0;
+    for (const action of mapFeedEventsToActions(inWindow)) {
+      if (action.kind === 'stake') continue;
+      const kind = action.kind === 'mint' ? 'MINT' : 'BURN';
+      if (await mintFlowRepository.record(action.symbol, kind, action.amount, `${action.signature}:${action.symbol}:${kind}:${action.amount.toFixed(4)}`)) added++;
+    }
+    if (pages >= RECONCILE_MAX_PAGES) logger.warn({ pages }, 'Daily reconcile hit its page cap — the oldest part of the window may not have been re-read');
+    logger.info({ pages, events: inWindow.length, added }, 'Daily reconcile: ledger checked against the feed');
+  } catch (err) {
+    logger.warn({ err }, 'Daily reconcile failed — summarising the ledger as it stands');
+  }
+}
+
 /**
  * `dryRun: true` previews the exact message the real post would send, without
  * any side effects: uses summarize() (read-only) instead of
@@ -980,6 +1023,7 @@ export async function postDailySummary(client: Client, opts?: { dryRun?: boolean
     const channel = await getMintAlertsChannel(client);
     if (!channel) return;
 
+    await reconcileLedgerFromFeed();
     const { windowStart, totals } = opts?.dryRun
       ? await mintFlowRepository.summarize()
       : await mintFlowRepository.summarizeAndClear();

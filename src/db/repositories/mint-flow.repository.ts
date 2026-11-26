@@ -37,9 +37,10 @@ export const mintFlowRepository = {
    * With an `eventKey`, a leg that was already recorded is skipped (unique index), so re-reading the
    * same transaction can never inflate the daily totals.
    */
-  async record(symbol: string, kind: FlowKind, amount: number, eventKey?: string): Promise<void> {
-    if (!(amount > 0)) return;
-    await prisma.mintFlowEvent.createMany({ data: [{ symbol, kind, amount, eventKey: eventKey ?? null }], skipDuplicates: true });
+  async record(symbol: string, kind: FlowKind, amount: number, eventKey?: string): Promise<boolean> {
+    if (!(amount > 0)) return false;
+    const res = await prisma.mintFlowEvent.createMany({ data: [{ symbol, kind, amount, eventKey: eventKey ?? null }], skipDuplicates: true });
+    return res.count > 0; // false = this leg was already in the ledger
   },
 
   /** Read-only aggregation — for previewing what the next real summary would say, without disturbing the rolling window. */
